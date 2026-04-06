@@ -111,11 +111,21 @@ impl RedisObject {
                 entries + groups + 64
             }
             RedisObject::Json(v) => {
-                // Rough estimate based on JSON serialization size
-                let serialized = serde_json::to_string(v).unwrap_or_default();
-                serialized.len() + 64
+                // Rough estimate without serializing
+                estimate_json_size(v)
             }
         }
+    }
+}
+
+fn estimate_json_size(v: &serde_json::Value) -> usize {
+    match v {
+        serde_json::Value::Null => 8,
+        serde_json::Value::Bool(_) => 8,
+        serde_json::Value::Number(_) => 16,
+        serde_json::Value::String(s) => s.len() + 24,
+        serde_json::Value::Array(arr) => 24 + arr.iter().map(estimate_json_size).sum::<usize>(),
+        serde_json::Value::Object(obj) => 48 + obj.iter().map(|(k, v)| k.len() + 24 + estimate_json_size(v)).sum::<usize>(),
     }
 }
 

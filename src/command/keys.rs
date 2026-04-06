@@ -466,7 +466,9 @@ pub fn cmd_move(ctx: &mut CommandContext) -> RespValue {
         return RespValue::error("ERR source and destination objects are the same");
     }
 
+    // Capture the expiry before removing from source
     let src_db = ctx.store.db_mut(ctx.db_index);
+    let expiry = src_db.get_expire(&key);
     let obj = match src_db.remove(&key) {
         Some(o) => o,
         None => return RespValue::integer(0),
@@ -474,12 +476,20 @@ pub fn cmd_move(ctx: &mut CommandContext) -> RespValue {
 
     let dst_db = ctx.store.db_mut(target_db);
     if dst_db.exists(&key) {
+        // Key exists in destination -- restore data AND expiry to source
         let src_db = ctx.store.db_mut(ctx.db_index);
-        src_db.set(key, obj);
+        src_db.set(key.clone(), obj);
+        if let Some(exp) = expiry {
+            src_db.set_expire(&key, exp);
+        }
         return RespValue::integer(0);
     }
 
-    dst_db.set(key, obj);
+    dst_db.set(key.clone(), obj);
+    // Transfer the expiry to the destination db
+    if let Some(exp) = expiry {
+        dst_db.set_expire(&key, exp);
+    }
     RespValue::integer(1)
 }
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use bytes::Bytes;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
@@ -138,12 +139,12 @@ pub fn cmd_hscan(ctx: &mut CommandContext) -> RespValue {
     match db.get(&key) {
         Some(RedisObject::Hash(hash)) => {
             let all_keys: Vec<Bytes> = hash.keys().cloned().collect();
-            let hash_clone: Vec<(Bytes, Bytes)> = hash.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let hash_data: HashMap<Bytes, Bytes> = hash.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let (new_cursor, matched_keys) = scan_collection(&all_keys, cursor, count, pattern.as_deref());
             let mut items = Vec::new();
             for k in matched_keys {
                 items.push(RespValue::bulk_string(k.clone()));
-                if let Some((_, v)) = hash_clone.iter().find(|(hk, _)| hk == k) {
+                if let Some(v) = hash_data.get(k) {
                     items.push(RespValue::bulk_string(v.clone()));
                 }
             }
@@ -196,10 +197,11 @@ pub fn cmd_zscan(ctx: &mut CommandContext) -> RespValue {
         Some(RedisObject::SortedSet(zset)) => {
             let all: Vec<(Bytes, f64)> = zset.range_by_index(0, -1);
             let all_members: Vec<Bytes> = all.iter().map(|(m, _)| m.clone()).collect();
+            let scores: HashMap<Bytes, f64> = all.iter().map(|(m, s)| (m.clone(), *s)).collect();
             let (new_cursor, matched) = scan_collection(&all_members, cursor, count, pattern.as_deref());
             let mut items = Vec::new();
             for m in matched {
-                if let Some((_, s)) = all.iter().find(|(am, _)| am == m) {
+                if let Some(s) = scores.get(m) {
                     items.push(RespValue::bulk_string(m.clone()));
                     items.push(RespValue::bulk_string(Bytes::from(format!("{}", s))));
                 }

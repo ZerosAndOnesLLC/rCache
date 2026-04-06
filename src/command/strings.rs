@@ -79,11 +79,10 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                if ts > now {
-                    ex = Some(Duration::from_secs(ts - now));
-                } else {
-                    ex = Some(Duration::from_secs(0));
+                if ts <= now {
+                    return RespValue::error("ERR invalid expire time in 'set' command");
                 }
+                ex = Some(Duration::from_secs(ts - now));
             }
             "PXAT" => {
                 i += 1;
@@ -95,11 +94,10 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
                 let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-                if ts_ms > now_ms {
-                    ex = Some(Duration::from_millis(ts_ms - now_ms));
-                } else {
-                    ex = Some(Duration::from_secs(0));
+                if ts_ms <= now_ms {
+                    return RespValue::error("ERR invalid expire time in 'set' command");
                 }
+                ex = Some(Duration::from_millis(ts_ms - now_ms));
             }
             "NX" => nx = true,
             "XX" => xx = true,
@@ -462,6 +460,9 @@ pub fn cmd_getex(ctx: &mut CommandContext) -> RespValue {
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                 if ts > now {
                     ctx.db().set_expire(&key, Instant::now() + Duration::from_secs(ts - now));
+                } else {
+                    // Timestamp in the past: delete the key immediately
+                    ctx.db().remove(&key);
                 }
             }
             "PXAT" => {
@@ -473,6 +474,9 @@ pub fn cmd_getex(ctx: &mut CommandContext) -> RespValue {
                 let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
                 if ts_ms > now_ms {
                     ctx.db().set_expire(&key, Instant::now() + Duration::from_millis(ts_ms - now_ms));
+                } else {
+                    // Timestamp in the past: delete the key immediately
+                    ctx.db().remove(&key);
                 }
             }
             "PERSIST" => {

@@ -345,13 +345,13 @@ impl Connection {
                 let onoff = String::from_utf8_lossy(&args[2]).to_uppercase();
                 if onoff == "ON" {
                     self.tracking_enabled = true;
-                    // Register tracking sender
+                    // Register tracking: always lock tracked_clients first, then tracking_senders
+                    let mut tracked = self.state.tracked_clients.lock().await;
+                    tracked.entry(self.client_id).or_default();
                     if let Some(tx) = self.tracking_tx.clone() {
                         let mut senders = self.state.tracking_senders.lock().await;
                         senders.insert(self.client_id, tx);
                     }
-                    let mut tracked = self.state.tracked_clients.lock().await;
-                    tracked.entry(self.client_id).or_default();
                     return RespValue::ok();
                 } else if onoff == "OFF" {
                     self.tracking_enabled = false;
@@ -521,18 +521,21 @@ impl Connection {
             self.watch_keys.clear();
             self.db_index = 0;
             self.resp_version = 2;
-            // Unsubscribe from all
-            let channels: Vec<Bytes> = self.subscribed_channels.iter().cloned().collect();
-            for ch in channels {
-                let mut pubsub = self.state.pubsub.lock().await;
-                pubsub.unsubscribe(self.client_id, &ch);
-                self.subscribed_channels.remove(&ch);
-            }
-            let patterns: Vec<Bytes> = self.subscribed_patterns.iter().cloned().collect();
-            for pat in patterns {
-                let mut pubsub = self.state.pubsub.lock().await;
-                pubsub.punsubscribe(self.client_id, &pat);
-                self.subscribed_patterns.remove(&pat);
+            // Unsubscribe from all channels and patterns with a single lock acquisition
+            {
+                let channels: Vec<Bytes> = self.subscribed_channels.iter().cloned().collect();
+                let patterns: Vec<Bytes> = self.subscribed_patterns.iter().cloned().collect();
+                if !channels.is_empty() || !patterns.is_empty() {
+                    let mut pubsub = self.state.pubsub.lock().await;
+                    for ch in &channels {
+                        pubsub.unsubscribe(self.client_id, ch);
+                    }
+                    for pat in &patterns {
+                        pubsub.punsubscribe(self.client_id, pat);
+                    }
+                }
+                self.subscribed_channels.clear();
+                self.subscribed_patterns.clear();
             }
             return RespValue::simple_string("RESET");
         }
@@ -1066,9 +1069,11 @@ impl Connection {
             return RespValue::error("EXECABORT Transaction discarded because of previous errors.");
         }
 
-        // Check WATCH keys
+        // Acquire store lock ONCE for the entire transaction (WATCH check + all commands)
+        let mut store = self.state.store.lock().await;
+
+        // Check WATCH keys under the same lock
         if !self.watch_keys.is_empty() {
-            let mut store = self.state.store.lock().await;
             let db = store.db_mut(self.db_index);
             for (key, version) in &self.watch_keys {
                 let current_version = compute_key_version(db, key);
@@ -1078,15 +1083,14 @@ impl Connection {
                     return RespValue::NullArray;
                 }
             }
-            drop(store);
         }
         self.watch_keys.clear();
 
+        // Execute all queued commands atomically under the same lock
         let queued = std::mem::take(&mut self.tx_queue);
         let mut results = Vec::with_capacity(queued.len());
 
         for args in queued {
-            let mut store = self.state.store.lock().await;
             let mut ctx = CommandContext {
                 store: &mut store,
                 db_index: self.db_index,
@@ -1098,6 +1102,7 @@ impl Connection {
             results.push(result);
         }
 
+        drop(store);
         RespValue::array(results)
     }
 

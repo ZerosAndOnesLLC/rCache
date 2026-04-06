@@ -237,15 +237,22 @@ impl Database {
     /// Get all keys matching a glob pattern.
     pub fn keys(&mut self, pattern: &str) -> Vec<Bytes> {
         let keys: Vec<Bytes> = self.data.keys().cloned().collect();
-        keys.into_iter()
+        // [M3] Collect expired keys during iteration and clean them up after
+        let mut expired_keys = Vec::new();
+        let result: Vec<Bytes> = keys.into_iter()
             .filter(|k| {
                 if self.is_expired(k) {
+                    expired_keys.push(k.clone());
                     return false;
                 }
                 let key_str = String::from_utf8_lossy(k);
                 glob_match(pattern, &key_str)
             })
-            .collect()
+            .collect();
+        for k in expired_keys {
+            self.remove(&k);
+        }
+        result
     }
 
     /// Get a random key.
@@ -273,11 +280,25 @@ impl Database {
         }
         if let Some(value) = self.data.remove(from) {
             let expire = self.expires.remove(from);
+            // [C1] Remove source from lru/lfu maps
+            self.lru_map.remove(from);
+            self.lfu_map.remove(from);
+            // [C2] If destination already exists, subtract its memory before overwriting
+            if let Some(old_dest) = self.data.get(&to) {
+                let old_dest_size = to.len() + old_dest.estimate_memory() + 64;
+                self.used_memory = self.used_memory.saturating_sub(old_dest_size);
+            }
+            // Remove destination's old expiry/lru/lfu if it existed
+            self.expires.remove(&to);
+            self.lru_map.remove(&to);
+            self.lfu_map.remove(&to);
             self.data.insert(to.clone(), value);
             if let Some(exp) = expire {
                 self.expires.insert(to.clone(), exp);
             }
-            // Remove destination's old expiry if it was different
+            // [C1] Add destination to lru/lfu maps
+            self.touch_lru(&to);
+            self.touch_lfu(&to);
             true
         } else {
             false
@@ -298,6 +319,8 @@ impl Database {
         std::mem::swap(&mut self.expires, &mut other.expires);
         std::mem::swap(&mut self.lru_map, &mut other.lru_map);
         std::mem::swap(&mut self.lfu_map, &mut other.lfu_map);
+        // [M4] Also swap used_memory
+        std::mem::swap(&mut self.used_memory, &mut other.used_memory);
     }
 
     /// Copy a key to a destination. Returns false if source doesn't exist.
@@ -311,10 +334,24 @@ impl Database {
         }
         if let Some(value) = self.data.get(from).cloned() {
             let expire = self.expires.get(from).copied();
+            // [C3] If destination already exists, subtract its memory before overwriting
+            if let Some(old_dest) = self.data.get(&to) {
+                let old_dest_size = to.len() + old_dest.estimate_memory() + 64;
+                self.used_memory = self.used_memory.saturating_sub(old_dest_size);
+            }
+            // [C4] Remove old destination's lru/lfu entries if replacing
+            self.lru_map.remove(&to);
+            self.lfu_map.remove(&to);
+            // [C3] Add new destination's memory
+            let new_size = to.len() + value.estimate_memory() + 64;
+            self.used_memory += new_size;
             self.data.insert(to.clone(), value);
             if let Some(exp) = expire {
-                self.expires.insert(to, exp);
+                self.expires.insert(to.clone(), exp);
             }
+            // [C4] Add destination to lru/lfu maps
+            self.touch_lru(&to);
+            self.touch_lfu(&to);
             true
         } else {
             false
@@ -426,7 +463,6 @@ impl Database {
     }
 
     /// Insert a key-value pair directly (used by persistence loading).
-    /// Does not update LRU.
     pub fn set_raw(&mut self, key: Bytes, value: RedisObject) {
         let new_size = key.len() + value.estimate_memory() + 64;
         if let Some(old) = self.data.get(&key) {
@@ -434,12 +470,18 @@ impl Database {
             self.used_memory = self.used_memory.saturating_sub(old_size);
         }
         self.used_memory += new_size;
+        // [H6] Create lru/lfu entries for the key
+        self.touch_lru(&key);
+        self.touch_lfu(&key);
         self.data.insert(key, value);
     }
 
     /// Set expiration directly (used by persistence loading).
     pub fn set_expire_raw(&mut self, key: Bytes, when: Instant) {
-        self.expires.insert(key, when);
+        // [H7] Only set expiry if the key actually exists in data
+        if self.data.contains_key(&key) {
+            self.expires.insert(key, when);
+        }
     }
 
     /// Get all keys (for eviction sampling).

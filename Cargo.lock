@@ -880,7 +880,7 @@ dependencies = [
 
 [[package]]
 name = "rcache"
-version = "0.10.0"
+version = "0.10.3"
 dependencies = [
  "bytes",
  "crc16",
