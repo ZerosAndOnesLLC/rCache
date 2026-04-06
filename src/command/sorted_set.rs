@@ -1220,3 +1220,189 @@ pub fn cmd_bzmpop(ctx: &mut CommandContext) -> RespValue {
 
     RespValue::NullArray
 }
+
+// ============================================================
+// ZRANGEBYLEX / ZREVRANGEBYLEX -- deprecated wrappers
+// ============================================================
+
+pub fn cmd_zrangebylex(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let min_str = String::from_utf8_lossy(&ctx.args[2]).to_string();
+    let max_str = String::from_utf8_lossy(&ctx.args[3]).to_string();
+
+    let mut limit_offset: Option<usize> = None;
+    let mut limit_count: Option<usize> = None;
+
+    let mut i = 4;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        if opt == "LIMIT" {
+            i += 1;
+            if i + 1 >= ctx.args.len() {
+                return RespValue::error("ERR syntax error");
+            }
+            limit_offset = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
+            i += 1;
+            limit_count = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
+        }
+        i += 1;
+    }
+
+    match get_zset(ctx, &key) {
+        Ok(Some(zset)) => {
+            let all = zset.range_by_index(0, -1);
+            let mut items: Vec<(Bytes, f64)> = all
+                .into_iter()
+                .filter(|(m, _)| lex_in_range(m, &min_str, &max_str))
+                .collect();
+            if let (Some(offset), Some(count)) = (limit_offset, limit_count) {
+                items = items.into_iter().skip(offset).take(count).collect();
+            }
+            format_zset_response(items, false)
+        }
+        Ok(None) => RespValue::array(vec![]),
+        Err(e) => e,
+    }
+}
+
+pub fn cmd_zrevrangebylex(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let max_str = String::from_utf8_lossy(&ctx.args[2]).to_string();
+    let min_str = String::from_utf8_lossy(&ctx.args[3]).to_string();
+
+    let mut limit_offset: Option<usize> = None;
+    let mut limit_count: Option<usize> = None;
+
+    let mut i = 4;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        if opt == "LIMIT" {
+            i += 1;
+            if i + 1 >= ctx.args.len() {
+                return RespValue::error("ERR syntax error");
+            }
+            limit_offset = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
+            i += 1;
+            limit_count = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
+        }
+        i += 1;
+    }
+
+    match get_zset(ctx, &key) {
+        Ok(Some(zset)) => {
+            let all = zset.range_by_index(0, -1);
+            let mut items: Vec<(Bytes, f64)> = all
+                .into_iter()
+                .filter(|(m, _)| lex_in_range(m, &min_str, &max_str))
+                .collect();
+            items.reverse();
+            if let (Some(offset), Some(count)) = (limit_offset, limit_count) {
+                items = items.into_iter().skip(offset).take(count).collect();
+            }
+            format_zset_response(items, false)
+        }
+        Ok(None) => RespValue::array(vec![]),
+        Err(e) => e,
+    }
+}
+
+// ============================================================
+// ZREMRANGEBYLEX / ZREMRANGEBYRANK / ZREMRANGEBYSCORE
+// ============================================================
+
+pub fn cmd_zremrangebylex(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let min_str = String::from_utf8_lossy(&ctx.args[2]).to_string();
+    let max_str = String::from_utf8_lossy(&ctx.args[3]).to_string();
+
+    match get_zset(ctx, &key) {
+        Ok(Some(zset)) => {
+            let to_remove: Vec<Bytes> = zset
+                .range_by_index(0, -1)
+                .into_iter()
+                .filter(|(m, _)| lex_in_range(m, &min_str, &max_str))
+                .map(|(m, _)| m)
+                .collect();
+            let count = to_remove.len() as i64;
+            match get_zset_mut(ctx, &key) {
+                Ok(Some(zset)) => {
+                    for m in &to_remove {
+                        zset.remove(m);
+                    }
+                }
+                _ => {}
+            }
+            cleanup_empty_zset(ctx, &key);
+            RespValue::integer(count)
+        }
+        Ok(None) => RespValue::integer(0),
+        Err(e) => e,
+    }
+}
+
+pub fn cmd_zremrangebyrank(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+    let stop: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+
+    match get_zset(ctx, &key) {
+        Ok(Some(zset)) => {
+            let items = zset.range_by_index(start, stop);
+            let to_remove: Vec<Bytes> = items.into_iter().map(|(m, _)| m).collect();
+            let count = to_remove.len() as i64;
+            match get_zset_mut(ctx, &key) {
+                Ok(Some(zset)) => {
+                    for m in &to_remove {
+                        zset.remove(m);
+                    }
+                }
+                _ => {}
+            }
+            cleanup_empty_zset(ctx, &key);
+            RespValue::integer(count)
+        }
+        Ok(None) => RespValue::integer(0),
+        Err(e) => e,
+    }
+}
+
+pub fn cmd_zremrangebyscore(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let min_str = String::from_utf8_lossy(&ctx.args[2]).to_string();
+    let max_str = String::from_utf8_lossy(&ctx.args[3]).to_string();
+
+    let (min, min_incl) = match parse_score_bound(&min_str) {
+        Some(v) => v,
+        None => return RespValue::error("ERR min or max is not a float"),
+    };
+    let (max, max_incl) = match parse_score_bound(&max_str) {
+        Some(v) => v,
+        None => return RespValue::error("ERR min or max is not a float"),
+    };
+
+    match get_zset(ctx, &key) {
+        Ok(Some(zset)) => {
+            let items = zset.range_by_score_bounded(min, min_incl, max, max_incl);
+            let to_remove: Vec<Bytes> = items.into_iter().map(|(m, _)| m).collect();
+            let count = to_remove.len() as i64;
+            match get_zset_mut(ctx, &key) {
+                Ok(Some(zset)) => {
+                    for m in &to_remove {
+                        zset.remove(m);
+                    }
+                }
+                _ => {}
+            }
+            cleanup_empty_zset(ctx, &key);
+            RespValue::integer(count)
+        }
+        Ok(None) => RespValue::integer(0),
+        Err(e) => e,
+    }
+}

@@ -19,5 +19,6 @@ mod replication;
 mod stream;
 mod cluster;
 mod advanced;
+mod stubs;
 
 pub use registry::{CommandRegistry, CommandContext};

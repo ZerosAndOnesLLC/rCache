@@ -720,3 +720,31 @@ pub fn cmd_blmpop(ctx: &mut CommandContext) -> RespValue {
 
     RespValue::NullArray
 }
+
+/// RPOPLPUSH src dst - deprecated, equivalent to LMOVE src dst RIGHT LEFT
+pub fn cmd_rpoplpush(ctx: &mut CommandContext) -> RespValue {
+    let src = ctx.args[1].clone();
+    let dst = ctx.args[2].clone();
+    ctx.args = vec![
+        Bytes::from("LMOVE"),
+        src,
+        dst,
+        Bytes::from("RIGHT"),
+        Bytes::from("LEFT"),
+    ];
+    cmd_lmove(ctx)
+}
+
+/// BRPOPLPUSH src dst timeout - deprecated, non-blocking stub
+pub fn cmd_brpoplpush(ctx: &mut CommandContext) -> RespValue {
+    let src = ctx.args[1].clone();
+    let dst = ctx.args[2].clone();
+    ctx.args = vec![
+        Bytes::from("LMOVE"),
+        src,
+        dst,
+        Bytes::from("RIGHT"),
+        Bytes::from("LEFT"),
+    ];
+    cmd_lmove(ctx)
+}

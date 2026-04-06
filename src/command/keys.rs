@@ -310,11 +310,12 @@ pub fn cmd_object(ctx: &mut CommandContext) -> RespValue {
                 return RespValue::wrong_arity("object|freq");
             }
             let key = ctx.args[2].clone();
-            if ctx.db().exists(&key) {
-                RespValue::integer(0)
-            } else {
-                RespValue::Null
+            let db = ctx.db();
+            if !db.exists(&key) {
+                return RespValue::Null;
             }
+            let counter = db.lfu_of(&key).unwrap_or(0);
+            RespValue::integer(counter as i64)
         }
         _ => RespValue::error(format!("ERR unknown subcommand or wrong number of arguments for 'object|{}'", subcmd.to_lowercase())),
     }
@@ -447,4 +448,55 @@ pub fn cmd_sort(ctx: &mut CommandContext) -> RespValue {
         let items: Vec<RespValue> = sorted.into_iter().map(RespValue::bulk_string).collect();
         RespValue::array(items)
     }
+}
+
+/// MOVE key db - move a key to another database
+pub fn cmd_move(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let target_db: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+
+    if target_db >= ctx.store.db_count() {
+        return RespValue::error("ERR invalid DB index");
+    }
+
+    if target_db == ctx.db_index {
+        return RespValue::error("ERR source and destination objects are the same");
+    }
+
+    let src_db = ctx.store.db_mut(ctx.db_index);
+    let obj = match src_db.remove(&key) {
+        Some(o) => o,
+        None => return RespValue::integer(0),
+    };
+
+    let dst_db = ctx.store.db_mut(target_db);
+    if dst_db.exists(&key) {
+        let src_db = ctx.store.db_mut(ctx.db_index);
+        src_db.set(key, obj);
+        return RespValue::integer(0);
+    }
+
+    dst_db.set(key, obj);
+    RespValue::integer(1)
+}
+
+/// DUMP key - serialize key value (simplified stub)
+pub fn cmd_dump(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let db = ctx.db();
+    match db.get(&key) {
+        Some(obj) => {
+            let data = format!("{:?}", obj);
+            RespValue::bulk_string(Bytes::from(data))
+        }
+        None => RespValue::Null,
+    }
+}
+
+/// RESTORE key ttl serialized-value [REPLACE]
+pub fn cmd_restore(_ctx: &mut CommandContext) -> RespValue {
+    RespValue::error("ERR DUMP/RESTORE serialization not supported in rCache")
 }

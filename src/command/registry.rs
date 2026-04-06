@@ -313,6 +313,60 @@ impl CommandRegistry {
         self.register("READWRITE", super::cluster::cmd_readwrite, 1);
         self.register("ASKING", super::cluster::cmd_asking, 1);
 
+        // === Connection-level command stubs (Group 1) ===
+        // These are intercepted in connection.rs but registered for COMMAND INFO.
+        self.register("AUTH", super::stubs::cmd_auth_stub, -2);
+        self.register("MULTI", super::stubs::cmd_multi_stub, 1);
+        self.register("EXEC", super::stubs::cmd_exec_stub, 1);
+        self.register("DISCARD", super::stubs::cmd_discard_stub, 1);
+        self.register("WATCH", super::stubs::cmd_watch_stub, -2);
+        self.register("UNWATCH", super::stubs::cmd_unwatch_stub, 1);
+        self.register("SUBSCRIBE", super::stubs::cmd_subscribe_stub, -2);
+        self.register("UNSUBSCRIBE", super::stubs::cmd_unsubscribe_stub, -1);
+        self.register("PSUBSCRIBE", super::stubs::cmd_psubscribe_stub, -2);
+        self.register("PUNSUBSCRIBE", super::stubs::cmd_punsubscribe_stub, -1);
+        self.register("PUBLISH", super::stubs::cmd_publish_stub, 3);
+        self.register("PUBSUB", super::stubs::cmd_pubsub_stub, -2);
+        self.register("QUIT", super::stubs::cmd_quit_stub, 1);
+
+        // === Deprecated aliases (Group 2) ===
+        self.register("HMSET", super::hash::cmd_hset, -4);
+        self.register("RPOPLPUSH", super::list::cmd_rpoplpush, 3);
+        self.register("BRPOPLPUSH", super::list::cmd_brpoplpush, 4);
+        self.register("HSTRLEN", super::hash::cmd_hstrlen, 3);
+        self.register("GEORADIUS", super::stubs::cmd_georadius, -6);
+        self.register("GEORADIUSBYMEMBER", super::stubs::cmd_georadiusbymember, -5);
+        self.register("GEORADIUS_RO", super::stubs::cmd_georadius, -6);
+        self.register("GEORADIUSBYMEMBER_RO", super::stubs::cmd_georadiusbymember, -5);
+
+        // === Missing sorted set commands (Group 3) ===
+        self.register("ZRANGEBYLEX", super::sorted_set::cmd_zrangebylex, -4);
+        self.register("ZREVRANGEBYLEX", super::sorted_set::cmd_zrevrangebylex, -4);
+        self.register("ZREMRANGEBYLEX", super::sorted_set::cmd_zremrangebylex, 4);
+        self.register("ZREMRANGEBYRANK", super::sorted_set::cmd_zremrangebyrank, 4);
+        self.register("ZREMRANGEBYSCORE", super::sorted_set::cmd_zremrangebyscore, 4);
+
+        // === Other missing commands (Group 4) ===
+        self.register("XSETID", super::stream::cmd_xsetid, -3);
+        self.register("MOVE", super::keys::cmd_move, 3);
+        self.register("ROLE", super::replication::cmd_role, 1);
+        self.register("SHUTDOWN", super::server_cmds::cmd_shutdown, -1);
+        self.register("DUMP", super::keys::cmd_dump, 2);
+        self.register("RESTORE", super::keys::cmd_restore, -4);
+        self.register("RESTORE-ASKING", super::keys::cmd_restore, -4);
+        self.register("MONITOR", super::stubs::cmd_monitor, 1);
+        self.register("WAITAOF", super::stubs::cmd_waitaof, 3);
+        self.register("EVAL_RO", super::scripting::cmd_eval, -3);
+        self.register("EVALSHA_RO", super::scripting::cmd_evalsha, -3);
+        self.register("SPUBLISH", super::stubs::cmd_spublish, 3);
+        self.register("SSUBSCRIBE", super::stubs::cmd_ssubscribe_stub, -2);
+        self.register("SUNSUBSCRIBE", super::stubs::cmd_sunsubscribe_stub, -1);
+        self.register("COMMANDLOG", super::stubs::cmd_commandlog, -2);
+        self.register("PFDEBUG", super::stubs::cmd_pfdebug, -1);
+        self.register("PFSELFTEST", super::stubs::cmd_pfselftest, 1);
+        self.register("FAILOVER", super::stubs::cmd_failover, -1);
+        self.register("SYNC", super::stubs::cmd_sync, 1);
+
         // === Module stubs (Phase 11) ===
         self.register("MODULE", super::advanced::cmd_module, -2);
 

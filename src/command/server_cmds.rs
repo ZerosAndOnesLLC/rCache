@@ -340,3 +340,8 @@ pub fn cmd_command(ctx: &mut CommandContext) -> RespValue {
         RespValue::array(vec![])
     }
 }
+
+/// SHUTDOWN [NOSAVE|SAVE] - stub that returns OK
+pub fn cmd_shutdown(_ctx: &mut CommandContext) -> RespValue {
+    RespValue::ok()
+}

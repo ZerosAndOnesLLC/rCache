@@ -251,6 +251,22 @@ pub fn cmd_hincrbyfloat(ctx: &mut CommandContext) -> RespValue {
     RespValue::bulk_string(Bytes::from(s))
 }
 
+pub fn cmd_hstrlen(ctx: &mut CommandContext) -> RespValue {
+    let key = ctx.args[1].clone();
+    let field = ctx.args[2].clone();
+    let db = ctx.db();
+    match db.get(&key) {
+        Some(RedisObject::Hash(h)) => {
+            match h.get(&field) {
+                Some(v) => RespValue::integer(v.len() as i64),
+                None => RespValue::integer(0),
+            }
+        }
+        Some(_) => RespValue::wrong_type(),
+        None => RespValue::integer(0),
+    }
+}
+
 pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count = if ctx.args.len() > 2 {

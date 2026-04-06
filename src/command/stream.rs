@@ -1730,3 +1730,32 @@ pub fn cmd_xautoclaim(ctx: &mut CommandContext) -> RespValue {
         RespValue::array(deleted_ids),
     ])
 }
+
+/// XSETID key id [ENTRIESADDED entries-added]
+pub fn cmd_xsetid(ctx: &mut CommandContext) -> RespValue {
+    if ctx.args.len() < 3 {
+        return RespValue::wrong_arity("xsetid");
+    }
+
+    let key = ctx.args[1].clone();
+    let id_str = String::from_utf8_lossy(&ctx.args[2]).to_string();
+
+    let new_id = match parse_stream_id(&id_str) {
+        Ok(id) => id,
+        Err(e) => return e,
+    };
+
+    let db = ctx.db();
+    if !db.exists(&key) {
+        db.set(key.clone(), RedisObject::Stream(StreamData::new()));
+    }
+
+    match db.get_mut(&key) {
+        Some(RedisObject::Stream(s)) => {
+            s.last_id = new_id;
+            RespValue::ok()
+        }
+        Some(_) => RespValue::wrong_type(),
+        None => unreachable!(),
+    }
+}
