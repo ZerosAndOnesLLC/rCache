@@ -1,7 +1,7 @@
 mod registry;
 mod strings;
 mod keys;
-mod server_cmds;
+pub(crate) mod server_cmds;
 mod list;
 mod set;
 mod hash;

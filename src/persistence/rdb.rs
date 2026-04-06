@@ -155,8 +155,14 @@ pub fn save(store: &Store, path: &Path) -> io::Result<()> {
     // EOF marker
     file.write_all(&[RDB_OPCODE_EOF])?;
 
-    // CRC64 placeholder (8 bytes of zeros)
-    file.write_all(&[0u8; 8])?;
+    // Compute CRC64 of everything written so far
+    // We need to re-read the temp file to compute the checksum
+    file.flush()?;
+    drop(file);
+    let file_data = std::fs::read(&temp_path)?;
+    let crc = crc64_compute(&file_data);
+    let mut file = std::fs::OpenOptions::new().append(true).open(&temp_path)?;
+    file.write_all(&crc.to_le_bytes())?;
 
     file.flush()?;
     drop(file);
@@ -215,7 +221,21 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
                 }
             }
             RDB_OPCODE_EOF => {
-                // Skip CRC64 (8 bytes) if present
+                // Verify CRC64 if present (8 bytes after EOF marker)
+                if cursor + 8 <= data.len() {
+                    let stored_crc = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                    if stored_crc != 0 {
+                        // Compute CRC64 of everything up to (but not including) the CRC bytes
+                        // cursor points to right after the EOF opcode, so data[..cursor] includes EOF
+                        let computed_crc = crc64_compute(&data[..cursor]);
+                        if stored_crc != computed_crc {
+                            tracing::warn!(
+                                "RDB CRC64 mismatch: stored={:#x}, computed={:#x} (continuing anyway)",
+                                stored_crc, computed_crc
+                            );
+                        }
+                    }
+                }
                 break;
             }
             RDB_OPCODE_EXPIRETIME_MS => {
@@ -446,6 +466,24 @@ fn read_u32_le(data: &[u8], cursor: usize) -> io::Result<(u32, usize)> {
     }
     let val = u32::from_le_bytes(data[cursor..cursor + 4].try_into().unwrap());
     Ok((val, cursor + 4))
+}
+
+/// CRC64 computation using the ECMA-182 polynomial.
+/// This is a simplified implementation for RDB file integrity checking.
+fn crc64_compute(data: &[u8]) -> u64 {
+    const POLY: u64 = 0xad93d23594c935a9;
+    let mut crc: u64 = 0;
+    for &byte in data {
+        crc ^= byte as u64;
+        for _ in 0..8 {
+            if crc & 1 == 1 {
+                crc = (crc >> 1) ^ POLY;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    crc
 }
 
 #[cfg(test)]

@@ -26,6 +26,14 @@ pub struct Config {
     pub tls_cert_file: Option<String>,
     /// Path to the TLS private key file (PEM format).
     pub tls_key_file: Option<String>,
+    /// Compression: minimum byte size to trigger compression.
+    pub compression_threshold: usize,
+    /// Whether transparent compression is enabled.
+    pub compression_enabled: bool,
+    /// Slowlog: minimum execution time in microseconds to log (default 10000).
+    pub slowlog_log_slower_than: i64,
+    /// Maximum number of slow log entries to keep.
+    pub slowlog_max_len: usize,
 }
 
 impl Default for Config {
@@ -50,6 +58,10 @@ impl Default for Config {
             tls_port: None,
             tls_cert_file: None,
             tls_key_file: None,
+            compression_threshold: 1024,
+            compression_enabled: false,
+            slowlog_log_slower_than: 10000,
+            slowlog_max_len: 128,
         }
     }
 }
@@ -167,6 +179,30 @@ impl Config {
                     i += 1;
                     if i < args.len() {
                         config.tls_key_file = Some(args[i].clone());
+                    }
+                }
+                "--compression-enabled" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.compression_enabled = args[i] == "yes";
+                    }
+                }
+                "--compression-threshold" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.compression_threshold = args[i].parse().unwrap_or(1024);
+                    }
+                }
+                "--slowlog-log-slower-than" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.slowlog_log_slower_than = args[i].parse().unwrap_or(10000);
+                    }
+                }
+                "--slowlog-max-len" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.slowlog_max_len = args[i].parse().unwrap_or(128);
                     }
                 }
                 _ => {}

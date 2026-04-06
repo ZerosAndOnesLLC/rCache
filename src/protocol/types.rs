@@ -3,6 +3,7 @@ use bytes::{Bytes, BytesMut, BufMut};
 /// RESP protocol value types.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RespValue {
+    // RESP2 types
     SimpleString(String),
     Error(String),
     Integer(i64),
@@ -10,6 +11,16 @@ pub enum RespValue {
     Array(Vec<RespValue>),
     Null,
     NullArray,
+    // RESP3 types
+    Double(f64),                          // ,3.14\r\n
+    Boolean(bool),                        // #t\r\n or #f\r\n
+    BlobError(Bytes),                     // !<len>\r\n<data>\r\n
+    VerbatimString(Bytes),                // =<len>\r\n<encoding>:<data>\r\n
+    BigNumber(String),                    // (12345\r\n
+    Map(Vec<(RespValue, RespValue)>),     // %N\r\n
+    RespSet(Vec<RespValue>),              // ~N\r\n
+    Push(Vec<RespValue>),                 // >N\r\n
+    Resp3Null,                            // _\r\n
 }
 
 impl RespValue {
@@ -89,6 +100,74 @@ impl RespValue {
             }
             RespValue::NullArray => {
                 buf.put_slice(b"*-1\r\n");
+            }
+            // RESP3 types
+            RespValue::Double(d) => {
+                buf.put_u8(b',');
+                if d.is_infinite() {
+                    if *d > 0.0 {
+                        buf.put_slice(b"inf");
+                    } else {
+                        buf.put_slice(b"-inf");
+                    }
+                } else if d.is_nan() {
+                    buf.put_slice(b"nan");
+                } else {
+                    buf.put_slice(d.to_string().as_bytes());
+                }
+                buf.put_slice(b"\r\n");
+            }
+            RespValue::Boolean(b_val) => {
+                buf.put_u8(b'#');
+                buf.put_u8(if *b_val { b't' } else { b'f' });
+                buf.put_slice(b"\r\n");
+            }
+            RespValue::BlobError(data) => {
+                buf.put_u8(b'!');
+                buf.put_slice(data.len().to_string().as_bytes());
+                buf.put_slice(b"\r\n");
+                buf.put_slice(data);
+                buf.put_slice(b"\r\n");
+            }
+            RespValue::VerbatimString(data) => {
+                buf.put_u8(b'=');
+                buf.put_slice(data.len().to_string().as_bytes());
+                buf.put_slice(b"\r\n");
+                buf.put_slice(data);
+                buf.put_slice(b"\r\n");
+            }
+            RespValue::BigNumber(s) => {
+                buf.put_u8(b'(');
+                buf.put_slice(s.as_bytes());
+                buf.put_slice(b"\r\n");
+            }
+            RespValue::Map(entries) => {
+                buf.put_u8(b'%');
+                buf.put_slice(entries.len().to_string().as_bytes());
+                buf.put_slice(b"\r\n");
+                for (key, val) in entries {
+                    key.write_to(buf);
+                    val.write_to(buf);
+                }
+            }
+            RespValue::RespSet(items) => {
+                buf.put_u8(b'~');
+                buf.put_slice(items.len().to_string().as_bytes());
+                buf.put_slice(b"\r\n");
+                for item in items {
+                    item.write_to(buf);
+                }
+            }
+            RespValue::Push(items) => {
+                buf.put_u8(b'>');
+                buf.put_slice(items.len().to_string().as_bytes());
+                buf.put_slice(b"\r\n");
+                for item in items {
+                    item.write_to(buf);
+                }
+            }
+            RespValue::Resp3Null => {
+                buf.put_slice(b"_\r\n");
             }
         }
     }

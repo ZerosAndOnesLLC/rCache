@@ -1,7 +1,7 @@
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use super::types::RespValue;
 
-/// Streaming RESP2 protocol parser.
+/// Streaming RESP2/RESP3 protocol parser.
 pub struct Parser;
 
 #[derive(Debug)]
@@ -25,6 +25,16 @@ impl Parser {
             b':' => Self::parse_integer(buf),
             b'$' => Self::parse_bulk_string(buf),
             b'*' => Self::parse_array(buf),
+            // RESP3 types
+            b',' => Self::parse_double(buf),
+            b'#' => Self::parse_boolean(buf),
+            b'!' => Self::parse_blob_error(buf),
+            b'=' => Self::parse_verbatim_string(buf),
+            b'(' => Self::parse_big_number(buf),
+            b'%' => Self::parse_map(buf),
+            b'~' => Self::parse_set(buf),
+            b'>' => Self::parse_push(buf),
+            b'_' => Self::parse_resp3_null(buf),
             _ => Self::parse_inline(buf),
         }
     }
@@ -102,6 +112,150 @@ impl Parser {
         }
 
         Ok((RespValue::Array(items), consumed))
+    }
+
+    // === RESP3 parsers ===
+
+    fn parse_double(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, consumed) = Self::read_line(buf, 1)?;
+        let s = std::str::from_utf8(line)
+            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let d: f64 = match s {
+            "inf" => f64::INFINITY,
+            "-inf" => f64::NEG_INFINITY,
+            "nan" => f64::NAN,
+            _ => s.parse().map_err(|e: std::num::ParseFloatError| ParseError::Invalid(e.to_string()))?,
+        };
+        Ok((RespValue::Double(d), consumed))
+    }
+
+    fn parse_boolean(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, consumed) = Self::read_line(buf, 1)?;
+        match line {
+            b"t" => Ok((RespValue::Boolean(true), consumed)),
+            b"f" => Ok((RespValue::Boolean(false), consumed)),
+            _ => Err(ParseError::Invalid("invalid boolean value".to_string())),
+        }
+    }
+
+    fn parse_blob_error(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, header_consumed) = Self::read_line(buf, 1)?;
+        let len_str = std::str::from_utf8(line)
+            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: usize = len_str.parse()
+            .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
+
+        let total_needed = header_consumed + len + 2;
+        if buf.len() < total_needed {
+            return Err(ParseError::Incomplete);
+        }
+
+        let data = buf[header_consumed..header_consumed + len].to_vec();
+        Ok((RespValue::BlobError(Bytes::from(data)), total_needed))
+    }
+
+    fn parse_verbatim_string(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, header_consumed) = Self::read_line(buf, 1)?;
+        let len_str = std::str::from_utf8(line)
+            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: usize = len_str.parse()
+            .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
+
+        let total_needed = header_consumed + len + 2;
+        if buf.len() < total_needed {
+            return Err(ParseError::Incomplete);
+        }
+
+        let data = buf[header_consumed..header_consumed + len].to_vec();
+        Ok((RespValue::VerbatimString(Bytes::from(data)), total_needed))
+    }
+
+    fn parse_big_number(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, consumed) = Self::read_line(buf, 1)?;
+        let s = String::from_utf8_lossy(line).to_string();
+        Ok((RespValue::BigNumber(s), consumed))
+    }
+
+    fn parse_map(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, mut consumed) = Self::read_line(buf, 1)?;
+        let len_str = std::str::from_utf8(line)
+            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str.parse()
+            .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
+
+        if len < 0 {
+            return Err(ParseError::Invalid("invalid map length".to_string()));
+        }
+
+        let len = len as usize;
+        let mut entries = Vec::with_capacity(len);
+
+        for _ in 0..len {
+            let remaining = BytesMut::from(&buf[consumed..]);
+            let (key, n) = Self::parse(&remaining)?;
+            consumed += n;
+
+            let remaining = BytesMut::from(&buf[consumed..]);
+            let (val, n) = Self::parse(&remaining)?;
+            consumed += n;
+
+            entries.push((key, val));
+        }
+
+        Ok((RespValue::Map(entries), consumed))
+    }
+
+    fn parse_set(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, mut consumed) = Self::read_line(buf, 1)?;
+        let len_str = std::str::from_utf8(line)
+            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str.parse()
+            .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
+
+        if len < 0 {
+            return Err(ParseError::Invalid("invalid set length".to_string()));
+        }
+
+        let len = len as usize;
+        let mut items = Vec::with_capacity(len);
+
+        for _ in 0..len {
+            let remaining = BytesMut::from(&buf[consumed..]);
+            let (value, n) = Self::parse(&remaining)?;
+            items.push(value);
+            consumed += n;
+        }
+
+        Ok((RespValue::RespSet(items), consumed))
+    }
+
+    fn parse_push(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (line, mut consumed) = Self::read_line(buf, 1)?;
+        let len_str = std::str::from_utf8(line)
+            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str.parse()
+            .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
+
+        if len < 0 {
+            return Err(ParseError::Invalid("invalid push length".to_string()));
+        }
+
+        let len = len as usize;
+        let mut items = Vec::with_capacity(len);
+
+        for _ in 0..len {
+            let remaining = BytesMut::from(&buf[consumed..]);
+            let (value, n) = Self::parse(&remaining)?;
+            items.push(value);
+            consumed += n;
+        }
+
+        Ok((RespValue::Push(items), consumed))
+    }
+
+    fn parse_resp3_null(buf: &BytesMut) -> Result<(RespValue, usize), ParseError> {
+        let (_line, consumed) = Self::read_line(buf, 1)?;
+        Ok((RespValue::Resp3Null, consumed))
     }
 
     /// Parse an inline command (space-delimited, no RESP prefix).
@@ -293,6 +447,142 @@ mod tests {
             let buf = BytesMut::from(serialized.as_ref());
             let (parsed, _) = Parser::parse(&buf).unwrap();
             assert_eq!(val, parsed);
+        }
+    }
+
+    // === RESP3 tests ===
+
+    #[test]
+    fn test_resp3_double() {
+        let buf = BytesMut::from(",3.14\r\n");
+        let (val, consumed) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::Double(3.14));
+        assert_eq!(consumed, 7);
+    }
+
+    #[test]
+    fn test_resp3_double_inf() {
+        let buf = BytesMut::from(",inf\r\n");
+        let (val, _) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::Double(f64::INFINITY));
+
+        let buf = BytesMut::from(",-inf\r\n");
+        let (val, _) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::Double(f64::NEG_INFINITY));
+    }
+
+    #[test]
+    fn test_resp3_boolean() {
+        let buf = BytesMut::from("#t\r\n");
+        let (val, consumed) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::Boolean(true));
+        assert_eq!(consumed, 4);
+
+        let buf = BytesMut::from("#f\r\n");
+        let (val, consumed) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::Boolean(false));
+        assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn test_resp3_blob_error() {
+        let buf = BytesMut::from("!11\r\nERR unknown\r\n");
+        let (val, consumed) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::BlobError(bytes::Bytes::from("ERR unknown")));
+        assert_eq!(consumed, 18);
+    }
+
+    #[test]
+    fn test_resp3_verbatim_string() {
+        let buf = BytesMut::from("=15\r\ntxt:Hello World\r\n");
+        let (val, consumed) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::VerbatimString(bytes::Bytes::from("txt:Hello World")));
+        assert_eq!(consumed, 22);
+    }
+
+    #[test]
+    fn test_resp3_big_number() {
+        let buf = BytesMut::from("(12345678901234567890\r\n");
+        let (val, _) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::BigNumber("12345678901234567890".to_string()));
+    }
+
+    #[test]
+    fn test_resp3_null() {
+        let buf = BytesMut::from("_\r\n");
+        let (val, consumed) = Parser::parse(&buf).unwrap();
+        assert_eq!(val, RespValue::Resp3Null);
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn test_resp3_map() {
+        let buf = BytesMut::from("%2\r\n+key1\r\n:1\r\n+key2\r\n:2\r\n");
+        let (val, _) = Parser::parse(&buf).unwrap();
+        match val {
+            RespValue::Map(entries) => {
+                assert_eq!(entries.len(), 2);
+                assert_eq!(entries[0].0, RespValue::SimpleString("key1".to_string()));
+                assert_eq!(entries[0].1, RespValue::Integer(1));
+                assert_eq!(entries[1].0, RespValue::SimpleString("key2".to_string()));
+                assert_eq!(entries[1].1, RespValue::Integer(2));
+            }
+            _ => panic!("expected map"),
+        }
+    }
+
+    #[test]
+    fn test_resp3_set() {
+        let buf = BytesMut::from("~2\r\n:1\r\n:2\r\n");
+        let (val, _) = Parser::parse(&buf).unwrap();
+        match val {
+            RespValue::RespSet(items) => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0], RespValue::Integer(1));
+                assert_eq!(items[1], RespValue::Integer(2));
+            }
+            _ => panic!("expected set"),
+        }
+    }
+
+    #[test]
+    fn test_resp3_push() {
+        let buf = BytesMut::from(">2\r\n+message\r\n$5\r\nhello\r\n");
+        let (val, _) = Parser::parse(&buf).unwrap();
+        match val {
+            RespValue::Push(items) => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0], RespValue::SimpleString("message".to_string()));
+                assert_eq!(items[1], RespValue::BulkString(bytes::Bytes::from("hello")));
+            }
+            _ => panic!("expected push"),
+        }
+    }
+
+    #[test]
+    fn test_resp3_serialization_roundtrip() {
+        let values = vec![
+            RespValue::Double(3.14),
+            RespValue::Double(f64::INFINITY),
+            RespValue::Double(f64::NEG_INFINITY),
+            RespValue::Boolean(true),
+            RespValue::Boolean(false),
+            RespValue::BlobError(bytes::Bytes::from("ERR test")),
+            RespValue::VerbatimString(bytes::Bytes::from("txt:hello")),
+            RespValue::BigNumber("12345".to_string()),
+            RespValue::Resp3Null,
+            RespValue::Map(vec![
+                (RespValue::SimpleString("a".to_string()), RespValue::Integer(1)),
+            ]),
+            RespValue::RespSet(vec![RespValue::Integer(1), RespValue::Integer(2)]),
+            RespValue::Push(vec![RespValue::SimpleString("msg".to_string())]),
+        ];
+
+        for val in values {
+            let serialized = val.serialize();
+            let buf = BytesMut::from(serialized.as_ref());
+            let (parsed, _) = Parser::parse(&buf).unwrap();
+            assert_eq!(val, parsed, "roundtrip failed for {:?}", val);
         }
     }
 }

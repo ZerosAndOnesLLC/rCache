@@ -65,8 +65,11 @@ pub struct Connection {
     client_id: u64,
     db_index: usize,
     authenticated: bool,
+    auth_username: String,
     buffer: BytesMut,
     client_name: Option<String>,
+    // RESP protocol version (2 or 3)
+    resp_version: u8,
     // Pub/Sub state
     subscribed_channels: HashSet<Bytes>,
     subscribed_patterns: HashSet<Bytes>,
@@ -77,20 +80,30 @@ pub struct Connection {
     tx_queue: Vec<Vec<Bytes>>,
     tx_error: bool,
     watch_keys: Vec<(Bytes, Option<u64>)>,
+    // Client-side caching
+    tracking_enabled: bool,
+    tracked_keys: HashSet<Bytes>,
+    tracking_tx: Option<mpsc::UnboundedSender<RespValue>>,
+    tracking_rx: Option<mpsc::UnboundedReceiver<RespValue>>,
+    // Multi-tenancy namespace
+    namespace: Option<String>,
 }
 
 impl Connection {
     pub fn new(stream: MaybeTls, state: Arc<SharedState>, client_id: u64) -> Self {
         let authenticated = state.config.requirepass.is_none();
         let (tx, rx) = mpsc::unbounded_channel();
+        let (tracking_tx, tracking_rx) = mpsc::unbounded_channel();
         Self {
             stream,
             state,
             client_id,
             db_index: 0,
             authenticated,
+            auth_username: "default".to_string(),
             buffer: BytesMut::with_capacity(4096),
             client_name: None,
+            resp_version: 2,
             subscribed_channels: HashSet::new(),
             subscribed_patterns: HashSet::new(),
             pubsub_rx: Some(rx),
@@ -99,6 +112,11 @@ impl Connection {
             tx_queue: Vec::new(),
             tx_error: false,
             watch_keys: Vec::new(),
+            tracking_enabled: false,
+            tracked_keys: HashSet::new(),
+            tracking_tx: Some(tracking_tx),
+            tracking_rx: Some(tracking_rx),
+            namespace: None,
         }
     }
 
@@ -125,6 +143,15 @@ impl Connection {
                     }
                     Some(msg) = pubsub_rx.recv() => {
                         self.pubsub_rx = Some(pubsub_rx);
+                        let msg = if self.resp_version == 3 {
+                            // Convert pub/sub Array messages to Push type
+                            match msg {
+                                RespValue::Array(items) => RespValue::Push(items),
+                                other => other,
+                            }
+                        } else {
+                            msg
+                        };
                         let data = msg.serialize();
                         self.stream.write_all(&data).await?;
                     }
@@ -149,6 +176,14 @@ impl Connection {
     async fn cleanup_pubsub(&mut self) {
         let mut pubsub = self.state.pubsub.lock().await;
         pubsub.remove_client(self.client_id);
+        drop(pubsub);
+        // Clean up tracking state
+        if self.tracking_enabled {
+            let mut tracked = self.state.tracked_clients.lock().await;
+            tracked.remove(&self.client_id);
+            let mut senders = self.state.tracking_senders.lock().await;
+            senders.remove(&self.client_id);
+        }
     }
 
     async fn try_process_command(&mut self) -> Result<Option<RespValue>, Box<dyn std::error::Error + Send + Sync>> {
@@ -159,7 +194,82 @@ impl Connection {
         match Parser::parse(&self.buffer) {
             Ok((value, consumed)) => {
                 let _ = self.buffer.split_to(consumed);
+
+                // Extract command name for latency tracking
+                let cmd_name = match &value {
+                    RespValue::Array(items) if !items.is_empty() => {
+                        match &items[0] {
+                            RespValue::BulkString(b) => String::from_utf8_lossy(b).to_uppercase(),
+                            other => other.to_string_lossy().to_uppercase().into(),
+                        }
+                    }
+                    _ => "UNKNOWN".into(),
+                };
+
+                let start = std::time::Instant::now();
                 let response = self.execute_command(value).await;
+                let elapsed_us = start.elapsed().as_micros() as u64;
+                let response = self.convert_to_resp3(response);
+
+                // Record latency stats
+                {
+                    let mut stats = self.state.latency_stats.lock().await;
+                    let entry = stats.entry(cmd_name.to_string()).or_default();
+                    entry.count += 1;
+                    entry.total_us += elapsed_us;
+                    if entry.min_us == 0 || elapsed_us < entry.min_us {
+                        entry.min_us = elapsed_us;
+                    }
+                    if elapsed_us > entry.max_us {
+                        entry.max_us = elapsed_us;
+                    }
+                }
+
+                // Record to slowlog if above threshold
+                let threshold = self.state.config.slowlog_log_slower_than;
+                if threshold >= 0 && elapsed_us > threshold as u64 {
+                    let id = self.state.slowlog_next_id.fetch_add(1, Ordering::Relaxed);
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let client_name = self.client_name.clone().unwrap_or_default();
+
+                    // Write to SharedState slowlog
+                    {
+                        let entry = super::SlowLogEntry {
+                            id,
+                            timestamp,
+                            duration_us: elapsed_us,
+                            args: vec![cmd_name.to_string()],
+                            client_addr: String::new(),
+                            client_name: client_name.clone(),
+                        };
+                        let mut slowlog = self.state.slowlog.lock().await;
+                        let max_len = self.state.config.slowlog_max_len;
+                        slowlog.push(entry);
+                        if slowlog.len() > max_len {
+                            slowlog.remove(0);
+                        }
+                    }
+
+                    // Also write to global slowlog accessible by SLOWLOG command
+                    if let Ok(mut global_log) = crate::command::server_cmds::GLOBAL_SLOWLOG.lock() {
+                        global_log.push(crate::command::server_cmds::SlowLogEntryGlobal {
+                            id,
+                            timestamp,
+                            duration_us: elapsed_us,
+                            args: vec![cmd_name.to_string()],
+                            client_addr: String::new(),
+                            client_name,
+                        });
+                        let max_len = self.state.config.slowlog_max_len;
+                        if global_log.len() > max_len {
+                            global_log.remove(0);
+                        }
+                    }
+                }
+
                 self.state.commands_processed.fetch_add(1, Ordering::Relaxed);
                 Ok(Some(response))
             }
@@ -203,6 +313,61 @@ impl Connection {
             if cmd_name != "HELLO" {
                 return RespValue::error("NOAUTH Authentication required.");
             }
+        }
+
+        // ACL check: verify user is allowed to execute this command
+        {
+            let acl_users = self.state.acl_users.lock().await;
+            if let Some(user) = acl_users.get(&self.auth_username) {
+                if !user.is_command_allowed(&cmd_name) {
+                    return RespValue::error(format!(
+                        "NOPERM this user has no permissions to run the '{}' command",
+                        cmd_name.to_lowercase()
+                    ));
+                }
+                // Check key patterns for commands that have keys
+                if args.len() > 1 && !user.all_keys {
+                    let key_str = String::from_utf8_lossy(&args[1]);
+                    if !user.is_key_allowed(&key_str) {
+                        return RespValue::error(
+                            "NOPERM this user has no permissions to access one of the keys used as arguments"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Handle CLIENT TRACKING specially
+        if cmd_name == "CLIENT" && args.len() >= 3 {
+            let subcmd = String::from_utf8_lossy(&args[1]).to_uppercase();
+            if subcmd == "TRACKING" {
+                let onoff = String::from_utf8_lossy(&args[2]).to_uppercase();
+                if onoff == "ON" {
+                    self.tracking_enabled = true;
+                    // Register tracking sender
+                    if let Some(tx) = self.tracking_tx.clone() {
+                        let mut senders = self.state.tracking_senders.lock().await;
+                        senders.insert(self.client_id, tx);
+                    }
+                    let mut tracked = self.state.tracked_clients.lock().await;
+                    tracked.entry(self.client_id).or_default();
+                    return RespValue::ok();
+                } else if onoff == "OFF" {
+                    self.tracking_enabled = false;
+                    self.tracked_keys.clear();
+                    let mut tracked = self.state.tracked_clients.lock().await;
+                    tracked.remove(&self.client_id);
+                    let mut senders = self.state.tracking_senders.lock().await;
+                    senders.remove(&self.client_id);
+                    return RespValue::ok();
+                }
+            }
+        }
+
+        // Handle NAMESPACE commands
+        if cmd_name == "NAMESPACE" {
+            return self.handle_namespace(&args).await;
         }
 
         // Handle connection-level commands that need special handling
@@ -304,6 +469,18 @@ impl Connection {
 
         // Handle HELLO (needs connection-level access for protocol negotiation)
         if cmd_name == "HELLO" {
+            // Parse requested protocol version
+            let proto = if args.len() >= 2 {
+                match String::from_utf8_lossy(&args[1]).parse::<u8>() {
+                    Ok(2) => 2u8,
+                    Ok(3) => 3u8,
+                    Ok(_) => return RespValue::error("NOPROTO unsupported protocol version"),
+                    Err(_) => return RespValue::error("ERR Protocol version is not an integer or out of range"),
+                }
+            } else {
+                self.resp_version
+            };
+
             // Process AUTH and SETNAME if present
             let mut i = 2;
             while i < args.len() {
@@ -313,7 +490,6 @@ impl Connection {
                         if i + 2 >= args.len() {
                             return RespValue::error("ERR syntax error");
                         }
-                        // args[i+1] = username, args[i+2] = password
                         let auth_result = self.handle_auth_hello(&args[i + 1], &args[i + 2]);
                         if let Some(err) = auth_result {
                             return err;
@@ -330,7 +506,11 @@ impl Connection {
                     _ => { i += 1; }
                 }
             }
-            // Fall through to registry for the HELLO response
+
+            self.resp_version = proto;
+
+            // Build HELLO response
+            return self.build_hello_response(proto);
         }
 
         // Handle RESET
@@ -340,6 +520,7 @@ impl Connection {
             self.tx_error = false;
             self.watch_keys.clear();
             self.db_index = 0;
+            self.resp_version = 2;
             // Unsubscribe from all
             let channels: Vec<Bytes> = self.subscribed_channels.iter().cloned().collect();
             for ch in channels {
@@ -388,6 +569,16 @@ impl Connection {
 
         drop(store);
 
+        // Client-side caching: track read keys
+        if self.tracking_enabled && is_read_command(&cmd_name_for_aof) && args_for_aof.len() > 1 {
+            let key = args_for_aof[1].clone();
+            self.tracked_keys.insert(key.clone());
+            let mut tracked = self.state.tracked_clients.lock().await;
+            if let Some(keys) = tracked.get_mut(&self.client_id) {
+                keys.insert(key);
+            }
+        }
+
         // Append to AOF if this was a write command and it succeeded
         if crate::persistence::aof::is_write_command(&cmd_name_for_aof) {
             if !matches!(result, RespValue::Error(_)) {
@@ -398,9 +589,179 @@ impl Connection {
                     }
                 }
             }
+
+            // Client-side caching: send invalidation to tracking clients
+            if args_for_aof.len() > 1 {
+                let mutated_key = &args_for_aof[1];
+                let tracked = self.state.tracked_clients.lock().await;
+                let senders = self.state.tracking_senders.lock().await;
+                for (client_id, keys) in tracked.iter() {
+                    if *client_id == self.client_id {
+                        continue;
+                    }
+                    if keys.contains(mutated_key) {
+                        if let Some(sender) = senders.get(client_id) {
+                            let invalidation = RespValue::Push(vec![
+                                RespValue::bulk_string(Bytes::from("invalidate")),
+                                RespValue::array(vec![
+                                    RespValue::bulk_string(mutated_key.clone()),
+                                ]),
+                            ]);
+                            let _ = sender.send(invalidation);
+                        }
+                    }
+                }
+            }
         }
 
         result
+    }
+
+    /// Build the HELLO response, using Map for RESP3 and flat Array for RESP2.
+    fn build_hello_response(&self, proto: u8) -> RespValue {
+        let entries = vec![
+            (RespValue::bulk_string(Bytes::from("server")), RespValue::bulk_string(Bytes::from("rcache"))),
+            (RespValue::bulk_string(Bytes::from("version")), RespValue::bulk_string(Bytes::from(env!("CARGO_PKG_VERSION")))),
+            (RespValue::bulk_string(Bytes::from("proto")), RespValue::integer(proto as i64)),
+            (RespValue::bulk_string(Bytes::from("id")), RespValue::integer(self.client_id as i64)),
+            (RespValue::bulk_string(Bytes::from("mode")), RespValue::bulk_string(Bytes::from("standalone"))),
+            (RespValue::bulk_string(Bytes::from("role")), RespValue::bulk_string(Bytes::from("master"))),
+            (RespValue::bulk_string(Bytes::from("modules")), RespValue::array(vec![])),
+        ];
+
+        if proto == 3 {
+            RespValue::Map(entries)
+        } else {
+            // RESP2: flat array of key, value, key, value, ...
+            let mut flat = Vec::with_capacity(entries.len() * 2);
+            for (k, v) in entries {
+                flat.push(k);
+                flat.push(v);
+            }
+            RespValue::array(flat)
+        }
+    }
+
+    /// Convert a response to RESP3 format when appropriate.
+    /// This converts Null to Resp3Null and pub/sub messages to Push type.
+    fn convert_to_resp3(&self, value: RespValue) -> RespValue {
+        if self.resp_version < 3 {
+            return value;
+        }
+        match value {
+            RespValue::Null => RespValue::Resp3Null,
+            RespValue::NullArray => RespValue::Resp3Null,
+            _ => value,
+        }
+    }
+
+    async fn handle_namespace(&mut self, args: &[Bytes]) -> RespValue {
+        if args.len() < 2 {
+            return RespValue::error("ERR wrong number of arguments for 'namespace' command");
+        }
+        let subcmd = String::from_utf8_lossy(&args[1]).to_uppercase();
+        match subcmd.as_str() {
+            "CREATE" => {
+                if args.len() < 3 {
+                    return RespValue::wrong_arity("namespace|create");
+                }
+                let name = String::from_utf8_lossy(&args[2]).to_string();
+                let mut namespaces = self.state.namespaces.lock().await;
+                if namespaces.contains_key(&name) {
+                    return RespValue::error(format!("ERR namespace '{}' already exists", name));
+                }
+                let databases = self.state.config.databases;
+                namespaces.insert(name, crate::storage::Store::new(databases));
+                RespValue::ok()
+            }
+            "SELECT" => {
+                if args.len() < 3 {
+                    return RespValue::wrong_arity("namespace|select");
+                }
+                let name = String::from_utf8_lossy(&args[2]).to_string();
+                if name == "default" || name.is_empty() {
+                    self.namespace = None;
+                    return RespValue::ok();
+                }
+                let namespaces = self.state.namespaces.lock().await;
+                if namespaces.contains_key(&name) {
+                    drop(namespaces);
+                    self.namespace = Some(name);
+                    self.db_index = 0;
+                    RespValue::ok()
+                } else {
+                    RespValue::error(format!("ERR namespace '{}' does not exist", name))
+                }
+            }
+            "LIST" => {
+                let namespaces = self.state.namespaces.lock().await;
+                let mut names: Vec<RespValue> = vec![
+                    RespValue::bulk_string(Bytes::from("default")),
+                ];
+                for name in namespaces.keys() {
+                    names.push(RespValue::bulk_string(Bytes::from(name.clone())));
+                }
+                RespValue::array(names)
+            }
+            "DELETE" => {
+                if args.len() < 3 {
+                    return RespValue::wrong_arity("namespace|delete");
+                }
+                let name = String::from_utf8_lossy(&args[2]).to_string();
+                if name == "default" {
+                    return RespValue::error("ERR cannot delete the default namespace");
+                }
+                let mut namespaces = self.state.namespaces.lock().await;
+                if namespaces.remove(&name).is_some() {
+                    // If current connection was using this namespace, reset to default
+                    if self.namespace.as_deref() == Some(&name) {
+                        self.namespace = None;
+                        self.db_index = 0;
+                    }
+                    RespValue::ok()
+                } else {
+                    RespValue::error(format!("ERR namespace '{}' does not exist", name))
+                }
+            }
+            "INFO" => {
+                if args.len() < 3 {
+                    // Info about current namespace
+                    let name = self.namespace.clone().unwrap_or_else(|| "default".to_string());
+                    return RespValue::array(vec![
+                        RespValue::bulk_string(Bytes::from("name")),
+                        RespValue::bulk_string(Bytes::from(name)),
+                    ]);
+                }
+                let name = String::from_utf8_lossy(&args[2]).to_string();
+                if name == "default" {
+                    let store = self.state.store.lock().await;
+                    let total_keys: usize = (0..store.db_count()).map(|i| store.db(i).len()).sum();
+                    RespValue::array(vec![
+                        RespValue::bulk_string(Bytes::from("name")),
+                        RespValue::bulk_string(Bytes::from("default")),
+                        RespValue::bulk_string(Bytes::from("keys")),
+                        RespValue::integer(total_keys as i64),
+                    ])
+                } else {
+                    let namespaces = self.state.namespaces.lock().await;
+                    if let Some(ns_store) = namespaces.get(&name) {
+                        let total_keys: usize = (0..ns_store.db_count()).map(|i| ns_store.db(i).len()).sum();
+                        RespValue::array(vec![
+                            RespValue::bulk_string(Bytes::from("name")),
+                            RespValue::bulk_string(Bytes::from(name)),
+                            RespValue::bulk_string(Bytes::from("keys")),
+                            RespValue::integer(total_keys as i64),
+                        ])
+                    } else {
+                        RespValue::error(format!("ERR namespace '{}' does not exist", name))
+                    }
+                }
+            }
+            _ => RespValue::error(format!(
+                "ERR unknown subcommand or wrong number of arguments for 'namespace|{}'",
+                subcmd.to_lowercase()
+            )),
+        }
     }
 
     fn handle_auth(&mut self, args: &[Bytes]) -> RespValue {
@@ -408,26 +769,54 @@ impl Connection {
             return RespValue::wrong_arity("auth");
         }
 
-        match &self.state.config.requirepass {
-            Some(password) => {
-                let provided = if args.len() >= 3 {
-                    // AUTH username password (Redis 6+ ACL style, ignore username for now)
-                    String::from_utf8_lossy(&args[2]).to_string()
-                } else {
-                    String::from_utf8_lossy(&args[1]).to_string()
-                };
+        let (username, password) = if args.len() >= 3 {
+            (
+                String::from_utf8_lossy(&args[1]).to_string(),
+                String::from_utf8_lossy(&args[2]).to_string(),
+            )
+        } else {
+            ("default".to_string(), String::from_utf8_lossy(&args[1]).to_string())
+        };
 
-                if provided == *password {
+        // Try ACL-based authentication first
+        // We can't await here (sync fn), so check against config requirepass as fallback
+        // For the default user with requirepass, check directly
+        if username == "default" {
+            if let Some(ref req_pass) = self.state.config.requirepass {
+                if password == *req_pass {
                     self.authenticated = true;
-                    RespValue::ok()
-                } else {
-                    RespValue::error("WRONGPASS invalid username-password pair or user is disabled.")
+                    self.auth_username = username;
+                    return RespValue::ok();
                 }
-            }
-            None => {
-                RespValue::error("ERR Client sent AUTH, but no password is set. Did you mean ACL SETUSER with >password?")
+            } else {
+                return RespValue::error("ERR Client sent AUTH, but no password is set. Did you mean ACL SETUSER with >password?");
             }
         }
+
+        // For ACL users, check hashed password
+        // Note: we need to use try_lock since this is a sync function
+        if let Ok(acl_users) = self.state.acl_users.try_lock() {
+            if let Some(user) = acl_users.get(&username) {
+                if !user.enabled {
+                    return RespValue::error("WRONGPASS invalid username-password pair or user is disabled.");
+                }
+                if user.no_pass {
+                    self.authenticated = true;
+                    self.auth_username = username;
+                    return RespValue::ok();
+                }
+                // Hash the provided password and compare
+                use sha2::{Sha256, Digest};
+                let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
+                if user.passwords.contains(&hash) {
+                    self.authenticated = true;
+                    self.auth_username = username;
+                    return RespValue::ok();
+                }
+            }
+        }
+
+        RespValue::error("WRONGPASS invalid username-password pair or user is disabled.")
     }
 
     fn handle_auth_hello(&mut self, _username: &Bytes, password: &Bytes) -> Option<RespValue> {
@@ -809,4 +1198,18 @@ fn compute_key_version(db: &mut crate::storage::Database, key: &Bytes) -> Option
     }
 
     Some(hasher.finish())
+}
+
+/// Determine if a command is a read command (for client-side caching tracking).
+fn is_read_command(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "GET" | "MGET" | "HGET" | "HMGET" | "HGETALL" | "HKEYS" | "HVALS"
+            | "LRANGE" | "LINDEX" | "LLEN"
+            | "SISMEMBER" | "SMEMBERS" | "SCARD" | "SMISMEMBER"
+            | "ZSCORE" | "ZRANGE" | "ZRANK" | "ZCARD" | "ZRANGEBYSCORE"
+            | "XRANGE" | "XREVRANGE" | "XLEN"
+            | "JSON.GET" | "JSON.TYPE"
+            | "STRLEN" | "GETRANGE" | "EXISTS" | "TYPE" | "TTL" | "PTTL"
+    )
 }

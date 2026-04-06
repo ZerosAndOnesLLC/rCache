@@ -5,6 +5,8 @@ mod command;
 mod config;
 pub mod persistence;
 mod http;
+pub mod scripting_engine;
+pub mod compression;
 
 use config::Config;
 use server::Server;

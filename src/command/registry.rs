@@ -367,6 +367,9 @@ impl CommandRegistry {
         self.register("FAILOVER", super::stubs::cmd_failover, -1);
         self.register("SYNC", super::stubs::cmd_sync, 1);
 
+        // === Namespace commands (Multi-tenancy) ===
+        self.register("NAMESPACE", super::stubs::cmd_namespace_stub, -2);
+
         // === Module stubs (Phase 11) ===
         self.register("MODULE", super::advanced::cmd_module, -2);
 

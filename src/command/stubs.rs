@@ -129,6 +129,11 @@ pub fn cmd_sync(_ctx: &mut CommandContext) -> RespValue {
     RespValue::error("ERR SYNC not supported")
 }
 
+/// NAMESPACE - handled at connection level
+pub fn cmd_namespace_stub(_ctx: &mut CommandContext) -> RespValue {
+    RespValue::error("ERR NAMESPACE handled at connection level")
+}
+
 /// GEORADIUS key lng lat radius unit [options] - deprecated, wraps GEOSEARCH
 pub fn cmd_georadius(ctx: &mut CommandContext) -> RespValue {
     if ctx.args.len() < 6 {

@@ -380,6 +380,31 @@ fn resp_value_to_json(value: &RespValue) -> Value {
         }
         RespValue::Null => Value::Null,
         RespValue::NullArray => Value::Null,
+        // RESP3 types
+        RespValue::Double(d) => json!(d),
+        RespValue::Boolean(b) => json!(b),
+        RespValue::BlobError(b) => json!({"error": String::from_utf8_lossy(b).to_string()}),
+        RespValue::VerbatimString(b) => Value::String(String::from_utf8_lossy(b).to_string()),
+        RespValue::BigNumber(s) => Value::String(s.clone()),
+        RespValue::Map(entries) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in entries {
+                let key = match k {
+                    RespValue::SimpleString(s) => s.clone(),
+                    RespValue::BulkString(b) => String::from_utf8_lossy(b).to_string(),
+                    other => other.to_string_lossy(),
+                };
+                map.insert(key, resp_value_to_json(v));
+            }
+            Value::Object(map)
+        }
+        RespValue::RespSet(items) => {
+            Value::Array(items.iter().map(resp_value_to_json).collect())
+        }
+        RespValue::Push(items) => {
+            Value::Array(items.iter().map(resp_value_to_json).collect())
+        }
+        RespValue::Resp3Null => Value::Null,
     }
 }
 

@@ -14,6 +14,15 @@ pub struct Store {
     lfu_eviction_pool: Vec<(Bytes, u8, usize)>,
 }
 
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("databases", &self.databases.len())
+            .field("last_save", &self.last_save)
+            .finish()
+    }
+}
+
 impl Store {
     pub fn new(num_databases: usize) -> Self {
         let databases = (0..num_databases).map(|_| Database::new()).collect();
