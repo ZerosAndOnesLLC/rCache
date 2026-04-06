@@ -20,5 +20,8 @@ mod stream;
 mod cluster;
 mod advanced;
 mod stubs;
+mod json;
+mod probabilistic;
+mod ratelimit;
 
 pub use registry::{CommandRegistry, CommandContext};

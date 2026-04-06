@@ -11,6 +11,7 @@ pub enum RedisObject {
     Hash(HashMap<Bytes, Bytes>),
     SortedSet(SortedSetData),
     Stream(StreamData),
+    Json(serde_json::Value),
 }
 
 impl RedisObject {
@@ -22,6 +23,7 @@ impl RedisObject {
             RedisObject::Hash(_) => "hash",
             RedisObject::SortedSet(_) => "zset",
             RedisObject::Stream(_) => "stream",
+            RedisObject::Json(_) => "json",
         }
     }
 
@@ -74,6 +76,7 @@ impl RedisObject {
                     "stream"
                 }
             }
+            RedisObject::Json(_) => "json",
         }
     }
 }
@@ -106,6 +109,11 @@ impl RedisObject {
                 }).sum();
                 let groups: usize = s.groups.len() * 128;
                 entries + groups + 64
+            }
+            RedisObject::Json(v) => {
+                // Rough estimate based on JSON serialization size
+                let serialized = serde_json::to_string(v).unwrap_or_default();
+                serialized.len() + 64
             }
         }
     }

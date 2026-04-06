@@ -1,6 +1,6 @@
 [package]
 name = "rcache"
-version = "0.6.0"
+version = "0.9.0"
 edition = "2024"
 
 [dependencies]
@@ -11,6 +11,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand = "0.8"
 crc16 = "0.4"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio", "full"] }
+http-body-util = "0.1"
+serde_json = "1"
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
 
 [dev-dependencies]
 redis = { version = "0.27", features = ["tokio-comp"] }

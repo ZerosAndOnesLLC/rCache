@@ -23,6 +23,7 @@ const RDB_TYPE_SET: u8 = 2;
 const RDB_TYPE_SORTEDSET: u8 = 3;
 const RDB_TYPE_HASH: u8 = 4;
 const RDB_TYPE_STREAM: u8 = 5;
+const RDB_TYPE_JSON: u8 = 6;
 
 /// Save the entire store to an RDB file at the given path.
 pub fn save(store: &Store, path: &Path) -> io::Result<()> {
@@ -140,6 +141,13 @@ pub fn save(store: &Store, path: &Path) -> io::Result<()> {
                         write_u32_le(&mut file, 0u32)?;
                     }
                 }
+                RedisObject::Json(value) => {
+                    file.write_all(&[RDB_TYPE_JSON])?;
+                    write_bytes(&mut file, key)?;
+                    let json_str = serde_json::to_string(value)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    write_bytes(&mut file, json_str.as_bytes())?;
+                }
             }
         }
     }
@@ -240,7 +248,7 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
                     db.remove(&key);
                 }
             }
-            type_byte @ (RDB_TYPE_STRING | RDB_TYPE_LIST | RDB_TYPE_SET | RDB_TYPE_SORTEDSET | RDB_TYPE_HASH | RDB_TYPE_STREAM) => {
+            type_byte @ (RDB_TYPE_STRING | RDB_TYPE_LIST | RDB_TYPE_SET | RDB_TYPE_SORTEDSET | RDB_TYPE_HASH | RDB_TYPE_STREAM | RDB_TYPE_JSON) => {
                 let (key, value, new_cursor) = read_entry(&data, cursor, type_byte)?;
                 cursor = new_cursor;
                 store.db_mut(current_db).set_raw(key, value);
@@ -382,6 +390,15 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             }
 
             RedisObject::Stream(stream)
+        }
+        RDB_TYPE_JSON => {
+            let (json_bytes, c) = read_bytes(data, cursor)?;
+            cursor = c;
+            let json_str = std::str::from_utf8(&json_bytes)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let value: serde_json::Value = serde_json::from_str(json_str)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            RedisObject::Json(value)
         }
         _ => {
             return Err(io::Error::new(

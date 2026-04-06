@@ -4,6 +4,7 @@ mod storage;
 mod command;
 mod config;
 pub mod persistence;
+mod http;
 
 use config::Config;
 use server::Server;

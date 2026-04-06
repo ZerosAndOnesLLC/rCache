@@ -170,6 +170,16 @@ impl AofWriter {
                                 write_resp_command(&mut writer, &args)?;
                             }
                         }
+                        RedisObject::Json(value) => {
+                            let json_str = serde_json::to_string(value)
+                                .unwrap_or_else(|_| "null".to_string());
+                            write_resp_command(&mut writer, &[
+                                Bytes::from("JSON.SET"),
+                                key.clone(),
+                                Bytes::from("$"),
+                                Bytes::from(json_str),
+                            ])?;
+                        }
                     }
 
                     // Write PEXPIREAT if the key has an expiry
@@ -447,6 +457,15 @@ pub fn replay(path: &Path, store: &mut Store) -> io::Result<usize> {
                     "FLUSHALL" => {
                         store.flush_all();
                     }
+                    "JSON.SET" => {
+                        if args.len() >= 4 {
+                            let key = args[1].clone();
+                            let json_str = String::from_utf8_lossy(&args[3]);
+                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                                store.db_mut(current_db).set_raw(key, RedisObject::Json(value));
+                            }
+                        }
+                    }
                     _ => {
                         // Skip unknown commands during replay
                         tracing::debug!("AOF replay: skipping unknown command '{}'", cmd_name);
@@ -525,7 +544,9 @@ pub fn is_write_command(cmd: &str) -> bool {
         "HSET" | "HSETNX" | "HDEL" | "HINCRBY" | "HINCRBYFLOAT" |
         "ZADD" | "ZREM" | "ZINCRBY" | "ZPOPMIN" | "ZPOPMAX" |
         "ZUNIONSTORE" | "ZINTERSTORE" | "ZDIFFSTORE" |
-        "FLUSHDB" | "FLUSHALL" | "SWAPDB" | "SELECT"
+        "FLUSHDB" | "FLUSHALL" | "SWAPDB" | "SELECT" |
+        "JSON.SET" | "JSON.DEL" | "JSON.NUMINCRBY" | "JSON.STRAPPEND" |
+        "JSON.ARRAPPEND" | "JSON.ARRPOP" | "JSON.TOGGLE" | "JSON.NUMMULTBY" | "JSON.CLEAR"
     )
 }
 

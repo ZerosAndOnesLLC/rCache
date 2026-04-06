@@ -36,6 +36,11 @@ fn event_flag(cmd: &str) -> Option<char> {
         // t = stream commands
         "XADD" | "XDEL" | "XTRIM" | "XGROUP" | "XCLAIM" | "XAUTOCLAIM" => Some('t'),
 
+        // j = json commands (custom category, maps to generic for notification purposes)
+        "JSON.SET" | "JSON.DEL" | "JSON.NUMINCRBY" | "JSON.STRAPPEND"
+        | "JSON.ARRAPPEND" | "JSON.ARRPOP" | "JSON.TOGGLE" | "JSON.NUMMULTBY"
+        | "JSON.CLEAR" => Some('g'),
+
         _ => None,
     }
 }

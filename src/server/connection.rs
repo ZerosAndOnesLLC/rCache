@@ -1,7 +1,10 @@
 use std::collections::HashSet;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::task::{Context, Poll};
 use bytes::{Bytes, BytesMut};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
@@ -10,8 +13,54 @@ use crate::command::CommandContext;
 use crate::storage::db::glob_match;
 use super::SharedState;
 
+/// A stream that may or may not be TLS-wrapped.
+pub enum MaybeTls {
+    Plain(TcpStream),
+    Tls(tokio_rustls::server::TlsStream<TcpStream>),
+}
+
+impl AsyncRead for MaybeTls {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            MaybeTls::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            MaybeTls::Tls(s) => Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for MaybeTls {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            MaybeTls::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            MaybeTls::Tls(s) => Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            MaybeTls::Plain(s) => Pin::new(s).poll_flush(cx),
+            MaybeTls::Tls(s) => Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            MaybeTls::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            MaybeTls::Tls(s) => Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
 pub struct Connection {
-    stream: TcpStream,
+    stream: MaybeTls,
     state: Arc<SharedState>,
     client_id: u64,
     db_index: usize,
@@ -31,7 +80,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, state: Arc<SharedState>, client_id: u64) -> Self {
+    pub fn new(stream: MaybeTls, state: Arc<SharedState>, client_id: u64) -> Self {
         let authenticated = state.config.requirepass.is_none();
         let (tx, rx) = mpsc::unbounded_channel();
         Self {
@@ -111,6 +160,7 @@ impl Connection {
             Ok((value, consumed)) => {
                 let _ = self.buffer.split_to(consumed);
                 let response = self.execute_command(value).await;
+                self.state.commands_processed.fetch_add(1, Ordering::Relaxed);
                 Ok(Some(response))
             }
             Err(crate::protocol::parser::ParseError::Incomplete) => Ok(None),
@@ -750,6 +800,11 @@ fn compute_key_version(db: &mut crate::storage::Database, key: &Bytes) -> Option
             s.entries.len().hash(&mut hasher);
             s.last_id.ms.hash(&mut hasher);
             s.last_id.seq.hash(&mut hasher);
+        }
+        crate::storage::RedisObject::Json(v) => {
+            6u8.hash(&mut hasher);
+            let s = serde_json::to_string(v).unwrap_or_default();
+            s.hash(&mut hasher);
         }
     }
 

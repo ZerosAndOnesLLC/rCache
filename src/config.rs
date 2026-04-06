@@ -18,6 +18,14 @@ pub struct Config {
     pub lfu_log_factor: u64,
     /// LFU decay time in minutes -- counter decremented every N minutes of inactivity.
     pub lfu_decay_time: u64,
+    /// Optional HTTP/REST API port. None = disabled.
+    pub http_port: Option<u16>,
+    /// Optional TLS port. If set, a TLS listener is started on this port.
+    pub tls_port: Option<u16>,
+    /// Path to the TLS certificate file (PEM format).
+    pub tls_cert_file: Option<String>,
+    /// Path to the TLS private key file (PEM format).
+    pub tls_key_file: Option<String>,
 }
 
 impl Default for Config {
@@ -38,6 +46,10 @@ impl Default for Config {
             appendfsync: "everysec".to_string(),
             lfu_log_factor: 10,
             lfu_decay_time: 1,
+            http_port: None,
+            tls_port: None,
+            tls_cert_file: None,
+            tls_key_file: None,
         }
     }
 }
@@ -131,6 +143,30 @@ impl Config {
                     i += 1;
                     if i < args.len() {
                         config.lfu_decay_time = args[i].parse().unwrap_or(1);
+                    }
+                }
+                "--http-port" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.http_port = args[i].parse().ok();
+                    }
+                }
+                "--tls-port" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.tls_port = args[i].parse().ok();
+                    }
+                }
+                "--tls-cert-file" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.tls_cert_file = Some(args[i].clone());
+                    }
+                }
+                "--tls-key-file" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.tls_key_file = Some(args[i].clone());
                     }
                 }
                 _ => {}

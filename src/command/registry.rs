@@ -386,5 +386,51 @@ impl CommandRegistry {
 
         // === LCS (Phase 11) ===
         self.register("LCS", super::advanced::cmd_lcs, -3);
+
+        // === JSON commands ===
+        self.register("JSON.SET", super::json::cmd_json_set, -4);
+        self.register("JSON.GET", super::json::cmd_json_get, -2);
+        self.register("JSON.DEL", super::json::cmd_json_del, -2);
+        self.register("JSON.NUMINCRBY", super::json::cmd_json_numincrby, 4);
+        self.register("JSON.STRAPPEND", super::json::cmd_json_strappend, 4);
+        self.register("JSON.ARRAPPEND", super::json::cmd_json_arrappend, -4);
+        self.register("JSON.ARRLEN", super::json::cmd_json_arrlen, -2);
+        self.register("JSON.ARRPOP", super::json::cmd_json_arrpop, -2);
+        self.register("JSON.TYPE", super::json::cmd_json_type, -2);
+        self.register("JSON.OBJKEYS", super::json::cmd_json_objkeys, -2);
+        self.register("JSON.OBJLEN", super::json::cmd_json_objlen, -2);
+        self.register("JSON.TOGGLE", super::json::cmd_json_toggle, 3);
+        self.register("JSON.NUMMULTBY", super::json::cmd_json_nummultby, 4);
+        self.register("JSON.CLEAR", super::json::cmd_json_clear, -2);
+
+        // === Bloom Filter commands ===
+        self.register("BF.ADD", super::probabilistic::cmd_bf_add, 3);
+        self.register("BF.EXISTS", super::probabilistic::cmd_bf_exists, 3);
+        self.register("BF.MADD", super::probabilistic::cmd_bf_madd, -3);
+        self.register("BF.MEXISTS", super::probabilistic::cmd_bf_mexists, -3);
+        self.register("BF.RESERVE", super::probabilistic::cmd_bf_reserve, 4);
+        self.register("BF.INFO", super::probabilistic::cmd_bf_info, 2);
+
+        // === Count-Min Sketch commands ===
+        self.register("CMS.INITBYDIM", super::probabilistic::cmd_cms_initbydim, 4);
+        self.register("CMS.INITBYPROB", super::probabilistic::cmd_cms_initbyprob, 4);
+        self.register("CMS.INCRBY", super::probabilistic::cmd_cms_incrby, -4);
+        self.register("CMS.QUERY", super::probabilistic::cmd_cms_query, -3);
+        self.register("CMS.MERGE", super::probabilistic::cmd_cms_merge, -4);
+        self.register("CMS.INFO", super::probabilistic::cmd_cms_info, 2);
+
+        // === Top-K commands ===
+        self.register("TOPK.RESERVE", super::probabilistic::cmd_topk_reserve, -3);
+        self.register("TOPK.ADD", super::probabilistic::cmd_topk_add, -3);
+        self.register("TOPK.QUERY", super::probabilistic::cmd_topk_query, -3);
+        self.register("TOPK.LIST", super::probabilistic::cmd_topk_list, -2);
+        self.register("TOPK.COUNT", super::probabilistic::cmd_topk_count, -3);
+        self.register("TOPK.INFO", super::probabilistic::cmd_topk_info, 2);
+
+        // === Rate Limiting commands ===
+        self.register("RATELIMIT.CHECK", super::ratelimit::cmd_ratelimit_check, 4);
+        self.register("RATELIMIT.GET", super::ratelimit::cmd_ratelimit_get, 2);
+        self.register("RATELIMIT.RESET", super::ratelimit::cmd_ratelimit_reset, 2);
+        self.register("RATELIMIT.ACQUIRE", super::ratelimit::cmd_ratelimit_acquire, 4);
     }
 }

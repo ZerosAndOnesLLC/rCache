@@ -158,6 +158,16 @@ fn rewrite_aof_from_store(store: &crate::storage::Store, path: &std::path::Path)
                         write_cmd(&mut writer, &args)?;
                     }
                 }
+                RedisObject::Json(value) => {
+                    let json_str = serde_json::to_string(value)
+                        .unwrap_or_else(|_| "null".to_string());
+                    write_cmd(&mut writer, &[
+                        Bytes::from("JSON.SET"),
+                        key.clone(),
+                        Bytes::from("$"),
+                        Bytes::from(json_str),
+                    ])?;
+                }
             }
 
             if let Some(expire_at) = expires.get(key) {
