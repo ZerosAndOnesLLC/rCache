@@ -148,7 +148,7 @@ pub fn cmd_ttl(ctx: &mut CommandContext) -> RespValue {
     match ctx.db().ttl_ms(&key) {
         Some(-2) => RespValue::integer(-2),
         Some(-1) => RespValue::integer(-1),
-        Some(ms) => RespValue::integer((ms + 999) / 1000), // ceil to seconds
+        Some(ms) => RespValue::integer(ms / 1000), // floor to seconds (Redis behavior)
         None => RespValue::integer(-2),
     }
 }
@@ -416,6 +416,12 @@ pub fn cmd_sort(ctx: &mut CommandContext) -> RespValue {
             sa.cmp(&sb)
         });
     } else {
+        // Validate all values are numeric first (Redis behavior)
+        for item in &sorted {
+            if String::from_utf8_lossy(item).parse::<f64>().is_err() {
+                return RespValue::error("ERR One or more scores can't be converted into double");
+            }
+        }
         sorted.sort_by(|a, b| {
             let fa: f64 = String::from_utf8_lossy(a).parse().unwrap_or(0.0);
             let fb: f64 = String::from_utf8_lossy(b).parse().unwrap_or(0.0);

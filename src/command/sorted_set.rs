@@ -213,6 +213,9 @@ pub fn cmd_zincrby(ctx: &mut CommandContext) -> RespValue {
     };
 
     let new_score = zset.score(&member).unwrap_or(0.0) + delta;
+    if new_score.is_nan() || new_score.is_infinite() {
+        return RespValue::error("ERR increment would produce NaN or Infinity");
+    }
     zset.insert(member, new_score);
     RespValue::bulk_string(Bytes::from(format!("{}", new_score)))
 }
@@ -242,12 +245,7 @@ pub fn cmd_zcount(ctx: &mut CommandContext) -> RespValue {
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let items = zset.range_by_score(f64::NEG_INFINITY, f64::INFINITY);
-            let count = items.iter().filter(|(_, s)| {
-                let above_min = if min_inclusive { *s >= min } else { *s > min };
-                let below_max = if max_inclusive { *s <= max } else { *s < max };
-                above_min && below_max
-            }).count();
+            let count = zset.range_by_score_bounded(min, min_inclusive, max, max_inclusive).len();
             RespValue::integer(count as i64)
         }
         Ok(None) => RespValue::integer(0),
@@ -290,15 +288,15 @@ pub fn cmd_zrange(ctx: &mut CommandContext) -> RespValue {
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
             let mut items: Vec<(Bytes, f64)> = if byscore {
-                let (min, _min_incl) = match parse_score_bound(&min_arg) {
+                let (min, min_incl) = match parse_score_bound(&min_arg) {
                     Some(v) => v,
                     None => return RespValue::error("ERR min or max is not a float"),
                 };
-                let (max, _max_incl) = match parse_score_bound(&max_arg) {
+                let (max, max_incl) = match parse_score_bound(&max_arg) {
                     Some(v) => v,
                     None => return RespValue::error("ERR min or max is not a float"),
                 };
-                zset.range_by_score(min, max)
+                zset.range_by_score_bounded(min, min_incl, max, max_incl)
             } else if bylex {
                 // Simplified lex range: return all members
                 zset.range_by_index(0, -1)
@@ -328,11 +326,11 @@ pub fn cmd_zrangebyscore(ctx: &mut CommandContext) -> RespValue {
     let min_str = String::from_utf8_lossy(&ctx.args[2]).to_string();
     let max_str = String::from_utf8_lossy(&ctx.args[3]).to_string();
 
-    let (min, _) = match parse_score_bound(&min_str) {
+    let (min, min_incl) = match parse_score_bound(&min_str) {
         Some(v) => v,
         None => return RespValue::error("ERR min or max is not a float"),
     };
-    let (max, _) = match parse_score_bound(&max_str) {
+    let (max, max_incl) = match parse_score_bound(&max_str) {
         Some(v) => v,
         None => return RespValue::error("ERR min or max is not a float"),
     };
@@ -360,7 +358,7 @@ pub fn cmd_zrangebyscore(ctx: &mut CommandContext) -> RespValue {
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let mut items = zset.range_by_score(min, max);
+            let mut items = zset.range_by_score_bounded(min, min_incl, max, max_incl);
             if let (Some(offset), Some(count)) = (limit_offset, limit_count) {
                 items = items.into_iter().skip(offset).take(count).collect();
             }
@@ -386,7 +384,14 @@ pub fn cmd_zrevrange(ctx: &mut CommandContext) -> RespValue {
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let mut items = zset.range_by_index(start, stop);
+            // ZREVRANGE uses reverse indices: 0 = highest score, 1 = second highest, etc.
+            let len = zset.len() as i64;
+            let fwd_start = if start < 0 { (len + start).max(0) } else { start.min(len) };
+            let fwd_stop = if stop < 0 { (len + stop).max(0) } else { stop.min(len - 1) };
+            // Convert reverse indices to forward: rev_idx 0 -> fwd_idx (len-1)
+            let real_start = len - 1 - fwd_stop;
+            let real_stop = len - 1 - fwd_start;
+            let mut items = zset.range_by_index(real_start, real_stop);
             items.reverse();
             format_zset_response(items, withscores)
         }
@@ -400,11 +405,11 @@ pub fn cmd_zrevrangebyscore(ctx: &mut CommandContext) -> RespValue {
     let max_str = String::from_utf8_lossy(&ctx.args[2]).to_string();
     let min_str = String::from_utf8_lossy(&ctx.args[3]).to_string();
 
-    let (min, _) = match parse_score_bound(&min_str) {
+    let (min, min_incl) = match parse_score_bound(&min_str) {
         Some(v) => v,
         None => return RespValue::error("ERR min or max is not a float"),
     };
-    let (max, _) = match parse_score_bound(&max_str) {
+    let (max, max_incl) = match parse_score_bound(&max_str) {
         Some(v) => v,
         None => return RespValue::error("ERR min or max is not a float"),
     };
@@ -432,7 +437,7 @@ pub fn cmd_zrevrangebyscore(ctx: &mut CommandContext) -> RespValue {
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let mut items = zset.range_by_score(min, max);
+            let mut items = zset.range_by_score_bounded(min, min_incl, max, max_incl);
             items.reverse();
             if let (Some(offset), Some(count)) = (limit_offset, limit_count) {
                 items = items.into_iter().skip(offset).take(count).collect();

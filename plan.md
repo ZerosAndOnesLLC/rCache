@@ -71,7 +71,7 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 - [x] `SWAPDB db1 db2`
 - [x] `TIME` (server time as [seconds, microseconds])
 - [x] `QUIT` / connection close handling
-- [x] `RESET` (reset connection state)
+- [ ] `RESET` (reset connection state)
 - [x] `COMMAND COUNT`, `COMMAND LIST`, `COMMAND INFO`
 - [x] `AUTH password` (simple `requirepass` config)
 - [x] Basic `INFO` response (server section: version, uptime, tcp_port)
@@ -141,7 +141,7 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 - [x] `TYPE key`
 - [x] `OBJECT ENCODING key`, `OBJECT REFCOUNT key`, `OBJECT IDLETIME key`, `OBJECT FREQ key`, `OBJECT HELP`
 - [x] `COPY source destination [DB destination-db] [REPLACE]`
-- [x] `DUMP key`, `RESTORE key ttl serialized-value [REPLACE] [ABSTTL]`
+- [ ] `DUMP key`, `RESTORE key ttl serialized-value [REPLACE] [ABSTTL]`
 - [x] `TOUCH key [key ...]`
 - [x] `SORT key [BY pattern] [LIMIT offset count] [GET pattern ...] [ASC|DESC] [ALPHA] [STORE dest]`
 - [x] `SORT_RO`

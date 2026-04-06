@@ -176,19 +176,36 @@ impl SortedSetData {
             .collect()
     }
 
-    /// Range by score (inclusive min/max).
-    pub fn range_by_score(&self, min: f64, max: f64) -> Vec<(Bytes, f64)> {
+    /// Range by score with inclusive/exclusive bounds.
+    pub fn range_by_score_bounded(&self, min: f64, min_inclusive: bool, max: f64, max_inclusive: bool) -> Vec<(Bytes, f64)> {
         use std::ops::Bound;
-        let min_key = ScoreKey { score: min, member: Bytes::new() };
-        let max_key = ScoreKey { score: max, member: Bytes::from(vec![0xff; 32]) };
-        self.scores.range((Bound::Included(&min_key), Bound::Included(&max_key)))
+        let min_bound = if min == f64::NEG_INFINITY {
+            Bound::Unbounded
+        } else {
+            // Use empty member for inclusive lower bound (sorts before all members)
+            Bound::Included(ScoreKey { score: min, member: Bytes::new() })
+        };
+        let max_bound = if max == f64::INFINITY {
+            Bound::Unbounded
+        } else {
+            // Use Unbounded-like upper: include everything up to score, then filter
+            Bound::Unbounded
+        };
+
+        self.scores.range((min_bound, max_bound))
+            .take_while(|(k, _)| {
+                if max_inclusive { k.score <= max } else { k.score < max }
+            })
+            .filter(|(k, _)| {
+                if min_inclusive { k.score >= min } else { k.score > min }
+            })
             .map(|(k, _)| (k.member.clone(), k.score))
             .collect()
     }
 
-    /// Count members with scores in [min, max].
-    pub fn count_by_score(&self, min: f64, max: f64) -> usize {
-        self.range_by_score(min, max).len()
+    /// Range by score (inclusive min/max) - convenience wrapper.
+    pub fn range_by_score(&self, min: f64, max: f64) -> Vec<(Bytes, f64)> {
+        self.range_by_score_bounded(min, true, max, true)
     }
 
     /// Pop the member with the minimum score.

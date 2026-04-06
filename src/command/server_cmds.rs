@@ -82,7 +82,7 @@ pub fn cmd_info(ctx: &mut CommandContext) -> RespValue {
     let info = format!(
         "# Server\r\n\
          redis_version:7.2.0\r\n\
-         rcache_version:0.1.0\r\n\
+         rcache_version:{}\r\n\
          redis_mode:standalone\r\n\
          os:{}\r\n\
          tcp_port:6379\r\n\
@@ -103,6 +103,7 @@ pub fn cmd_info(ctx: &mut CommandContext) -> RespValue {
          # Keyspace\r\n\
          {}\
          ",
+        env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         uptime.as_secs(),
         uptime.as_secs() / 86400,
