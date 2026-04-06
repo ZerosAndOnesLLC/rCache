@@ -317,7 +317,9 @@ impl Connection {
             let maxmemory = self.state.config.maxmemory;
             let policy = self.state.config.maxmemory_policy.clone();
             let samples = self.state.config.maxmemory_samples;
-            if store.check_memory_limit(maxmemory, &policy, samples).is_err() {
+            let lfu_log_factor = self.state.config.lfu_log_factor;
+            let lfu_decay_time = self.state.config.lfu_decay_time;
+            if store.check_memory_limit(maxmemory, &policy, samples, lfu_log_factor, lfu_decay_time).is_err() {
                 return RespValue::error("OOM command not allowed when used memory > 'maxmemory'.");
             }
         }

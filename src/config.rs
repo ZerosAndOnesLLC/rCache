@@ -14,6 +14,10 @@ pub struct Config {
     pub aof_enabled: bool,
     pub aof_filename: String,
     pub appendfsync: String,
+    /// LFU logarithmic factor -- higher values slow counter growth.
+    pub lfu_log_factor: u64,
+    /// LFU decay time in minutes -- counter decremented every N minutes of inactivity.
+    pub lfu_decay_time: u64,
 }
 
 impl Default for Config {
@@ -32,6 +36,8 @@ impl Default for Config {
             aof_enabled: false,
             aof_filename: "appendonly.aof".to_string(),
             appendfsync: "everysec".to_string(),
+            lfu_log_factor: 10,
+            lfu_decay_time: 1,
         }
     }
 }
@@ -113,6 +119,18 @@ impl Config {
                     i += 1;
                     if i < args.len() {
                         config.maxmemory = args[i].parse().unwrap_or(0);
+                    }
+                }
+                "--lfu-log-factor" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.lfu_log_factor = args[i].parse().unwrap_or(10);
+                    }
+                }
+                "--lfu-decay-time" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.lfu_decay_time = args[i].parse().unwrap_or(1);
                     }
                 }
                 _ => {}

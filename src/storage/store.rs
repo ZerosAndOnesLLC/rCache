@@ -1,11 +1,17 @@
 use bytes::Bytes;
 use super::db::Database;
 
+/// Maximum size of the eviction pool for LFU.
+const EVICTION_POOL_SIZE: usize = 16;
+
 /// The top-level store containing multiple databases.
 pub struct Store {
     databases: Vec<Database>,
     /// Timestamp (unix secs) of last successful RDB save.
     pub last_save: u64,
+    /// Eviction pool for LFU: (key, counter, db_index), kept sorted so the
+    /// worst candidate (lowest counter) can be efficiently popped.
+    lfu_eviction_pool: Vec<(Bytes, u8, usize)>,
 }
 
 impl Store {
@@ -14,6 +20,7 @@ impl Store {
         Self {
             databases,
             last_save: 0,
+            lfu_eviction_pool: Vec::with_capacity(EVICTION_POOL_SIZE),
         }
     }
 
@@ -57,7 +64,14 @@ impl Store {
 
     /// Check if memory limit is exceeded and try to evict keys.
     /// Returns Ok(()) if under limit or eviction succeeded, Err if OOM and noeviction.
-    pub fn check_memory_limit(&mut self, maxmemory: usize, policy: &str, samples: usize) -> Result<(), ()> {
+    pub fn check_memory_limit(
+        &mut self,
+        maxmemory: usize,
+        policy: &str,
+        samples: usize,
+        lfu_log_factor: u64,
+        lfu_decay_time: u64,
+    ) -> Result<(), ()> {
         if maxmemory == 0 {
             return Ok(());
         }
@@ -70,7 +84,7 @@ impl Store {
         let mut attempts = 0;
         while self.total_used_memory() > maxmemory && attempts < 100 {
             attempts += 1;
-            if !self.evict_one(policy, samples) {
+            if !self.evict_one(policy, samples, lfu_log_factor, lfu_decay_time) {
                 return Err(());
             }
         }
@@ -83,7 +97,7 @@ impl Store {
     }
 
     /// Evict a single key according to policy. Returns false if no key could be evicted.
-    fn evict_one(&mut self, policy: &str, samples: usize) -> bool {
+    fn evict_one(&mut self, policy: &str, samples: usize, lfu_log_factor: u64, lfu_decay_time: u64) -> bool {
         use rand::seq::SliceRandom;
         let mut rng = rand::thread_rng();
 
@@ -121,6 +135,12 @@ impl Store {
             }
             "volatile-lru" => {
                 self.evict_lru(samples, true)
+            }
+            "allkeys-lfu" => {
+                self.evict_lfu(samples, false, lfu_log_factor, lfu_decay_time)
+            }
+            "volatile-lfu" => {
+                self.evict_lfu(samples, true, lfu_log_factor, lfu_decay_time)
             }
             "volatile-ttl" => {
                 self.evict_volatile_ttl(samples)
@@ -201,6 +221,89 @@ impl Store {
             self.databases[best_db].remove(&key);
             true
         } else {
+            false
+        }
+    }
+
+    /// Evict the least frequently used key using an eviction pool.
+    /// Samples N keys, merges them into the pool (capped at EVICTION_POOL_SIZE),
+    /// then evicts the worst candidate (lowest LFU counter) from the pool.
+    fn evict_lfu(
+        &mut self,
+        samples: usize,
+        volatile_only: bool,
+        lfu_log_factor: u64,
+        lfu_decay_time: u64,
+    ) -> bool {
+        use rand::seq::SliceRandom;
+        let mut rng = rand::thread_rng();
+
+        // Sample keys and get their LFU counters (applying decay via touch_lfu_with_params)
+        let mut sampled_entries: Vec<(Bytes, u8, usize)> = Vec::new();
+
+        for (db_idx, db) in self.databases.iter_mut().enumerate() {
+            let candidates = if volatile_only {
+                db.volatile_keys()
+            } else {
+                db.all_keys()
+            };
+            if candidates.is_empty() {
+                continue;
+            }
+            let chosen: Vec<Bytes> = candidates
+                .choose_multiple(&mut rng, samples)
+                .cloned()
+                .collect();
+            for key in chosen {
+                // Touch to apply decay before reading the counter
+                db.touch_lfu_with_params(&key, lfu_log_factor, lfu_decay_time);
+                let counter = db.lfu_of(&key).unwrap_or(0);
+                sampled_entries.push((key, counter, db_idx));
+            }
+        }
+
+        // Merge sampled entries into the eviction pool
+        for entry in sampled_entries {
+            if self.lfu_eviction_pool.len() < EVICTION_POOL_SIZE {
+                self.lfu_eviction_pool.push(entry);
+            } else {
+                // Find the best (highest counter) entry in the pool and replace it
+                // if this new entry is worse (lower counter)
+                let best_idx = self
+                    .lfu_eviction_pool
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, (_, c, _))| *c)
+                    .map(|(i, _)| i);
+                if let Some(idx) = best_idx {
+                    if entry.1 < self.lfu_eviction_pool[idx].1 {
+                        self.lfu_eviction_pool[idx] = entry;
+                    }
+                }
+            }
+        }
+
+        // Evict the worst candidate (lowest counter) from the pool
+        if self.lfu_eviction_pool.is_empty() {
+            return false;
+        }
+
+        let worst_idx = self
+            .lfu_eviction_pool
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, c, _))| *c)
+            .map(|(i, _)| i)
+            .unwrap();
+
+        let (key, _, db_idx) = self.lfu_eviction_pool.remove(worst_idx);
+
+        // Verify the key still exists before removing
+        if db_idx < self.databases.len() && self.databases[db_idx].lfu_of(&key).is_some() {
+            self.databases[db_idx].remove(&key);
+            true
+        } else {
+            // Key was already removed; stale pool entry
             false
         }
     }

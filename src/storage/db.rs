@@ -3,6 +3,36 @@ use std::collections::HashMap;
 use std::time::Instant;
 use super::types::RedisObject;
 
+/// Initial LFU counter value for new keys (matches Redis LFU_INIT_VAL).
+const LFU_INIT_VAL: u8 = 5;
+
+/// Logarithmic frequency counter with time-based decay for LFU eviction.
+#[derive(Debug, Clone)]
+pub struct LfuCounter {
+    /// Logarithmic frequency counter (0-255).
+    pub counter: u8,
+    /// Minutes-granularity timestamp for decay calculation (wraps at u16::MAX).
+    pub decr_time: u16,
+}
+
+impl LfuCounter {
+    fn new() -> Self {
+        Self {
+            counter: LFU_INIT_VAL,
+            decr_time: current_minutes(),
+        }
+    }
+}
+
+/// Returns the current time in minutes, wrapping at u16::MAX.
+fn current_minutes() -> u16 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    ((secs / 60) & 0xFFFF) as u16
+}
+
 /// A single Redis database (one of the 16 numbered databases).
 pub struct Database {
     data: HashMap<Bytes, RedisObject>,
@@ -10,6 +40,8 @@ pub struct Database {
     /// Monotonically increasing counter for LRU tracking (access order).
     pub(crate) lru_clock: u64,
     pub(crate) lru_map: HashMap<Bytes, u64>,
+    /// LFU frequency counters per key.
+    pub(crate) lfu_map: HashMap<Bytes, LfuCounter>,
     /// Approximate memory usage in bytes.
     pub(crate) used_memory: usize,
 }
@@ -21,6 +53,7 @@ impl Database {
             expires: HashMap::new(),
             lru_clock: 0,
             lru_map: HashMap::new(),
+            lfu_map: HashMap::new(),
             used_memory: 0,
         }
     }
@@ -32,6 +65,7 @@ impl Database {
             return None;
         }
         self.touch_lru(key);
+        self.touch_lfu(key);
         self.data.get(key)
     }
 
@@ -42,6 +76,7 @@ impl Database {
             return None;
         }
         self.touch_lru(key);
+        self.touch_lfu(key);
         self.data.get_mut(key)
     }
 
@@ -49,6 +84,7 @@ impl Database {
     pub fn set(&mut self, key: Bytes, value: RedisObject) {
         self.expires.remove(&key);
         self.touch_lru(&key);
+        self.touch_lfu(&key);
         // Update memory tracking
         let new_size = key.len() + value.estimate_memory() + 64;
         if let Some(old) = self.data.get(&key) {
@@ -62,6 +98,7 @@ impl Database {
     /// Set a value, keeping the existing expiration if any.
     pub fn set_keep_ttl(&mut self, key: Bytes, value: RedisObject) {
         self.touch_lru(&key);
+        self.touch_lfu(&key);
         // Update memory tracking
         let new_size = key.len() + value.estimate_memory() + 64;
         if let Some(old) = self.data.get(&key) {
@@ -85,6 +122,7 @@ impl Database {
     pub fn remove(&mut self, key: &Bytes) -> Option<RedisObject> {
         self.expires.remove(key);
         self.lru_map.remove(key);
+        self.lfu_map.remove(key);
         if let Some(obj) = self.data.remove(key) {
             let size = key.len() + obj.estimate_memory() + 64;
             self.used_memory = self.used_memory.saturating_sub(size);
@@ -164,6 +202,7 @@ impl Database {
         self.data.clear();
         self.expires.clear();
         self.lru_map.clear();
+        self.lfu_map.clear();
         self.used_memory = 0;
     }
 
@@ -188,6 +227,7 @@ impl Database {
             }
             self.expires.remove(&key);
             self.lru_map.remove(&key);
+            self.lfu_map.remove(&key);
             deleted += 1;
         }
 
@@ -257,6 +297,7 @@ impl Database {
         std::mem::swap(&mut self.data, &mut other.data);
         std::mem::swap(&mut self.expires, &mut other.expires);
         std::mem::swap(&mut self.lru_map, &mut other.lru_map);
+        std::mem::swap(&mut self.lfu_map, &mut other.lfu_map);
     }
 
     /// Copy a key to a destination. Returns false if source doesn't exist.
@@ -328,6 +369,50 @@ impl Database {
     fn touch_lru(&mut self, key: &Bytes) {
         self.lru_clock += 1;
         self.lru_map.insert(key.clone(), self.lru_clock);
+    }
+
+    /// Update the LFU counter for a key using default parameters (log_factor=10, decay_time=1).
+    fn touch_lfu(&mut self, key: &Bytes) {
+        self.touch_lfu_with_params(key, 10, 1);
+    }
+
+    /// Update the LFU counter for a key with configurable parameters.
+    /// Applies time-based decay first, then probabilistic increment.
+    pub fn touch_lfu_with_params(&mut self, key: &Bytes, lfu_log_factor: u64, lfu_decay_time: u64) {
+        use rand::Rng;
+
+        let now_minutes = current_minutes();
+        let entry = self.lfu_map.entry(key.clone()).or_insert_with(LfuCounter::new);
+
+        // Decay: reduce counter based on elapsed time
+        if lfu_decay_time > 0 {
+            let elapsed = if now_minutes >= entry.decr_time {
+                (now_minutes - entry.decr_time) as u64
+            } else {
+                // Handle u16 wrap-around
+                (now_minutes as u64) + (u16::MAX as u64) - (entry.decr_time as u64) + 1
+            };
+            let num_periods = elapsed / lfu_decay_time;
+            if num_periods > 0 {
+                let decrement = num_periods.min(entry.counter as u64);
+                entry.counter = entry.counter.saturating_sub(decrement as u8);
+                entry.decr_time = now_minutes;
+            }
+        }
+
+        // Probabilistic increment: probability = 1 / (counter * lfu_log_factor + 1)
+        if entry.counter < 255 {
+            let p = 1.0 / ((entry.counter as f64) * (lfu_log_factor as f64) + 1.0);
+            let r: f64 = rand::thread_rng().r#gen();
+            if r < p {
+                entry.counter = entry.counter.saturating_add(1);
+            }
+        }
+    }
+
+    /// Get the LFU counter value for a key.
+    pub fn lfu_of(&self, key: &Bytes) -> Option<u8> {
+        self.lfu_map.get(key).map(|c| c.counter)
     }
 
     /// Iterate over all key-value pairs (for persistence).
@@ -513,5 +598,52 @@ mod tests {
         assert!(glob_match("*", ""));
         assert!(glob_match("user:*", "user:123"));
         assert!(!glob_match("user:*", "admin:123"));
+    }
+
+    #[test]
+    fn test_lfu_counter_new_key() {
+        let mut db = Database::new();
+        let key = Bytes::from("test");
+        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        let counter = db.lfu_of(&key);
+        assert!(counter.is_some());
+        // New keys start at LFU_INIT_VAL (5) and may get incremented by touch
+        assert!(counter.unwrap() >= 5);
+    }
+
+    #[test]
+    fn test_lfu_counter_increments_on_access() {
+        let mut db = Database::new();
+        let key = Bytes::from("test");
+        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        let initial = db.lfu_of(&key).unwrap();
+
+        // Access many times to probabilistically increase counter
+        for _ in 0..1000 {
+            db.get(&key);
+        }
+        let after = db.lfu_of(&key).unwrap();
+        // After 1000 accesses, counter should have grown beyond initial
+        assert!(after > initial, "LFU counter should grow with access: initial={}, after={}", initial, after);
+    }
+
+    #[test]
+    fn test_lfu_counter_removed_on_delete() {
+        let mut db = Database::new();
+        let key = Bytes::from("test");
+        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        assert!(db.lfu_of(&key).is_some());
+        db.remove(&key);
+        assert!(db.lfu_of(&key).is_none());
+    }
+
+    #[test]
+    fn test_lfu_counter_cleared_on_flush() {
+        let mut db = Database::new();
+        let key = Bytes::from("test");
+        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        assert!(db.lfu_of(&key).is_some());
+        db.flush();
+        assert!(db.lfu_of(&key).is_none());
     }
 }
