@@ -71,7 +71,7 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 - [x] `SWAPDB db1 db2`
 - [x] `TIME` (server time as [seconds, microseconds])
 - [x] `QUIT` / connection close handling
-- [ ] `RESET` (reset connection state)
+- [x] `RESET` (reset connection state)
 - [x] `COMMAND COUNT`, `COMMAND LIST`, `COMMAND INFO`
 - [x] `AUTH password` (simple `requirepass` config)
 - [x] Basic `INFO` response (server section: version, uptime, tcp_port)
@@ -94,10 +94,10 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 
 ### 2.2 Blocking List Operations
 - [ ] Blocking waitlist: per-key queue of waiting clients
-- [ ] `BLPOP key [key ...] timeout`
-- [ ] `BRPOP key [key ...] timeout`
-- [ ] `BLMOVE source destination LEFT|RIGHT LEFT|RIGHT timeout`
-- [ ] `BLMPOP timeout numkeys key [key ...] LEFT|RIGHT [COUNT count]`
+- [x] `BLPOP key [key ...] timeout`
+- [x] `BRPOP key [key ...] timeout`
+- [x] `BLMOVE source destination LEFT|RIGHT LEFT|RIGHT timeout`
+- [x] `BLMPOP timeout numkeys key [key ...] LEFT|RIGHT [COUNT count]`
 - [ ] Wake blocked clients on LPUSH/RPUSH to watched keys
 
 ### 2.3 Sets
@@ -124,13 +124,13 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 - [x] `ZREM`, `ZSCORE`, `ZMSCORE`, `ZINCRBY`
 - [x] `ZCARD`, `ZCOUNT min max`, `ZLEXCOUNT min max`
 - [x] `ZRANGE key min max [BYSCORE|BYLEX] [REV] [LIMIT offset count] [WITHSCORES]`
-- [ ] `ZRANGESTORE dst src min max [BYSCORE|BYLEX] [REV] [LIMIT offset count]`
+- [x] `ZRANGESTORE dst src min max [BYSCORE|BYLEX] [REV] [LIMIT offset count]`
 - [x] `ZRANK`, `ZREVRANK`
 - [x] `ZPOPMIN [count]`, `ZPOPMAX [count]`
-- [ ] `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP` (blocking variants)
+- [x] `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP` (blocking variants)
 - [x] `ZRANDMEMBER [count [WITHSCORES]]`
 - [x] `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE`
-- [ ] `ZUNION`, `ZINTER`, `ZDIFF`, `ZINTERCARD`
+- [x] `ZUNION`, `ZINTER`, `ZDIFF`, `ZINTERCARD`
 
 ### 2.6 Key Scanning & Management
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` (cursor-based iteration)
@@ -151,108 +151,108 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 ## Phase 3: Pub/Sub & Transactions
 
 ### 3.1 Pub/Sub — Channel-Based
-- [ ] Subscription registry: `channel -> HashSet<ClientId>`
-- [ ] `SUBSCRIBE channel [channel ...]`
-- [ ] `UNSUBSCRIBE [channel ...]`
-- [ ] `PUBLISH channel message` (returns receiver count)
-- [ ] Pub/sub connection mode restrictions (only sub/unsub/ping/quit/reset allowed)
-- [ ] Client disconnect cleanup (remove from all subscriptions)
-- [ ] `PUBSUB CHANNELS [pattern]`, `PUBSUB NUMSUB [channel ...]`, `PUBSUB NUMPAT`
+- [x] Subscription registry: `channel -> HashSet<ClientId>`
+- [x] `SUBSCRIBE channel [channel ...]`
+- [x] `UNSUBSCRIBE [channel ...]`
+- [x] `PUBLISH channel message` (returns receiver count)
+- [x] Pub/sub connection mode restrictions (only sub/unsub/ping/quit/reset allowed)
+- [x] Client disconnect cleanup (remove from all subscriptions)
+- [x] `PUBSUB CHANNELS [pattern]`, `PUBSUB NUMSUB [channel ...]`, `PUBSUB NUMPAT`
 
 ### 3.2 Pub/Sub — Pattern-Based
-- [ ] Pattern subscription registry: `pattern -> HashSet<ClientId>`
-- [ ] `PSUBSCRIBE pattern [pattern ...]`
-- [ ] `PUNSUBSCRIBE [pattern ...]`
-- [ ] Glob pattern matching engine (`*`, `?`, `[abc]`, `[a-z]`)
-- [ ] On PUBLISH: check both exact channel matches and pattern matches
+- [x] Pattern subscription registry: `pattern -> HashSet<ClientId>`
+- [x] `PSUBSCRIBE pattern [pattern ...]`
+- [x] `PUNSUBSCRIBE [pattern ...]`
+- [x] Glob pattern matching engine (`*`, `?`, `[abc]`, `[a-z]`)
+- [x] On PUBLISH: check both exact channel matches and pattern matches
 
 ### 3.3 Transactions
-- [ ] Per-client transaction state: queue of commands, watched keys, dirty flag
-- [ ] `MULTI` — enter transaction mode, queue subsequent commands (reply `+QUEUED`)
-- [ ] `EXEC` — execute all queued commands atomically, return array of results
-- [ ] `DISCARD` — cancel transaction, clear queue
-- [ ] `WATCH key [key ...]` — optimistic locking
-- [ ] `UNWATCH` — cancel all watches
-- [ ] WATCH dictionary: global `key -> Vec<ClientId>`, flag clients dirty on key mutation
-- [ ] Guarantee no command interleaving during EXEC
+- [x] Per-client transaction state: queue of commands, watched keys, dirty flag
+- [x] `MULTI` — enter transaction mode, queue subsequent commands (reply `+QUEUED`)
+- [x] `EXEC` — execute all queued commands atomically, return array of results
+- [x] `DISCARD` — cancel transaction, clear queue
+- [x] `WATCH key [key ...]` — optimistic locking
+- [x] `UNWATCH` — cancel all watches
+- [x] WATCH dictionary: global `key -> Vec<ClientId>`, flag clients dirty on key mutation
+- [x] Guarantee no command interleaving during EXEC
 
 ---
 
 ## Phase 4: Extended Commands & RESP3
 
 ### 4.1 Bitmap Commands
-- [ ] `SETBIT key offset value`, `GETBIT key offset`
-- [ ] `BITCOUNT key [start end [BYTE|BIT]]`
-- [ ] `BITPOS key bit [start [end [BYTE|BIT]]]`
-- [ ] `BITOP AND|OR|XOR|NOT destkey key [key ...]`
-- [ ] `BITFIELD key [GET encoding offset] [SET encoding offset value] [INCRBY encoding offset increment] [OVERFLOW WRAP|SAT|FAIL]`
-- [ ] `BITFIELD_RO`
+- [x] `SETBIT key offset value`, `GETBIT key offset`
+- [x] `BITCOUNT key [start end [BYTE|BIT]]`
+- [x] `BITPOS key bit [start [end [BYTE|BIT]]]`
+- [x] `BITOP AND|OR|XOR|NOT destkey key [key ...]`
+- [x] `BITFIELD key [GET encoding offset] [SET encoding offset value] [INCRBY encoding offset increment] [OVERFLOW WRAP|SAT|FAIL]`
+- [x] `BITFIELD_RO`
 
 ### 4.2 HyperLogLog
-- [ ] Sparse representation (run-length encoded) and dense representation (16384 6-bit registers)
-- [ ] `PFADD key [element ...]`
-- [ ] `PFCOUNT key [key ...]`
-- [ ] `PFMERGE destkey sourcekey [sourcekey ...]`
-- [ ] Automatic sparse -> dense promotion
+- [x] Sparse representation (run-length encoded) and dense representation (16384 6-bit registers)
+- [x] `PFADD key [element ...]`
+- [x] `PFCOUNT key [key ...]`
+- [x] `PFMERGE destkey sourcekey [sourcekey ...]`
+- [x] Automatic sparse -> dense promotion
 
 ### 4.3 Geospatial Commands
-- [ ] Geohash encoding/decoding (52-bit interleaved lat/lng, stored as sorted set scores)
-- [ ] `GEOADD key [NX|XX] [CH] longitude latitude member [...]`
-- [ ] `GEOPOS key [member ...]`
-- [ ] `GEODIST key member1 member2 [M|KM|FT|MI]`
-- [ ] `GEOSEARCH key FROMMEMBER member|FROMLONLAT lng lat BYRADIUS radius M|KM|FT|MI|BYBOX width height M|KM|FT|MI [ASC|DESC] [COUNT count [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]`
-- [ ] `GEOSEARCHSTORE destination source [options]`
-- [ ] `GEOHASH key [member ...]`
+- [x] Geohash encoding/decoding (52-bit interleaved lat/lng, stored as sorted set scores)
+- [x] `GEOADD key [NX|XX] [CH] longitude latitude member [...]`
+- [x] `GEOPOS key [member ...]`
+- [x] `GEODIST key member1 member2 [M|KM|FT|MI]`
+- [x] `GEOSEARCH key FROMMEMBER member|FROMLONLAT lng lat BYRADIUS radius M|KM|FT|MI|BYBOX width height M|KM|FT|MI [ASC|DESC] [COUNT count [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]`
+- [x] `GEOSEARCHSTORE destination source [options]`
+- [x] `GEOHASH key [member ...]`
 
 ### 4.4 RESP3 Protocol
 - [ ] New types: Null, Double, Boolean, Blob Error, Verbatim String, Big Number, Map, Set, Push
-- [ ] `HELLO [protover [AUTH username password] [SETNAME clientname]]`
+- [x] `HELLO [protover [AUTH username password] [SETNAME clientname]]`
 - [ ] Per-connection protocol version tracking (default RESP2, upgrade to RESP3)
 - [ ] Push messages (`>` type) for pub/sub in RESP3 mode
 
 ### 4.5 Server Commands Expansion
-- [ ] Full `INFO` sections: server, clients, memory, persistence, stats, replication, cpu, keyspace, commandstats
-- [ ] `CONFIG GET pattern`, `CONFIG SET param value [...]`, `CONFIG REWRITE`, `CONFIG RESETSTAT`
-- [ ] `CLIENT LIST [TYPE type]`, `CLIENT GETNAME`, `CLIENT SETNAME name`
-- [ ] `CLIENT ID`, `CLIENT INFO`, `CLIENT KILL [filters]`
+- [x] Full `INFO` sections: server, clients, memory, persistence, stats, replication, cpu, keyspace, commandstats
+- [x] `CONFIG GET pattern`, `CONFIG SET param value [...]`, `CONFIG REWRITE`, `CONFIG RESETSTAT`
+- [x] `CLIENT LIST [TYPE type]`, `CLIENT GETNAME`, `CLIENT SETNAME name`
+- [x] `CLIENT ID`, `CLIENT INFO`, `CLIENT KILL [filters]`
 - [ ] `CLIENT PAUSE timeout [WRITE|ALL]`, `CLIENT UNPAUSE`
-- [ ] `SLOWLOG GET [count]`, `SLOWLOG LEN`, `SLOWLOG RESET`
-- [ ] `LATENCY LATEST`, `LATENCY HISTORY event`, `LATENCY RESET`
-- [ ] `MEMORY USAGE key [SAMPLES count]`
-- [ ] `DEBUG OBJECT key`, `DEBUG SLEEP seconds`
-- [ ] `LOLWUT [VERSION version]`
+- [x] `SLOWLOG GET [count]`, `SLOWLOG LEN`, `SLOWLOG RESET`
+- [x] `LATENCY LATEST`, `LATENCY HISTORY event`, `LATENCY RESET`
+- [x] `MEMORY USAGE key [SAMPLES count]`
+- [x] `DEBUG OBJECT key`, `DEBUG SLEEP seconds`
+- [x] `LOLWUT [VERSION version]`
 
 ---
 
 ## Phase 5: Persistence
 
 ### 5.1 RDB Snapshots — Save
-- [ ] RDB binary format: magic header, aux fields, per-db entries, EOF + CRC64
-- [ ] Serialize all data types: strings (int/embstr/raw encoding), lists, sets, sorted sets, hashes
-- [ ] Include expiry timestamps in serialized entries
-- [ ] `SAVE` (blocking, foreground)
-- [ ] `BGSAVE` — snapshot current state in background task (clone/fork approach)
+- [x] RDB binary format: magic header, aux fields, per-db entries, EOF + CRC64
+- [x] Serialize all data types: strings (int/embstr/raw encoding), lists, sets, sorted sets, hashes
+- [x] Include expiry timestamps in serialized entries
+- [x] `SAVE` (blocking, foreground)
+- [x] `BGSAVE` — snapshot current state in background task (clone/fork approach)
 - [ ] `save` config directive: periodic auto-save based on changes + time thresholds
 - [ ] Save on graceful shutdown
 
 ### 5.2 RDB Snapshots — Load
-- [ ] Parse RDB file on startup
-- [ ] Reconstruct all data types from binary format
-- [ ] Skip expired keys during load
+- [x] Parse RDB file on startup
+- [x] Reconstruct all data types from binary format
+- [x] Skip expired keys during load
 - [ ] CRC64 checksum verification
-- [ ] `LASTSAVE` (timestamp of last successful save)
+- [x] `LASTSAVE` (timestamp of last successful save)
 
 ### 5.3 AOF — Append Only File
-- [ ] Write every write command to AOF buffer in RESP format
-- [ ] `appendfsync` policy: `always`, `everysec` (default), `no`
-- [ ] Background fsync task for `everysec` mode
-- [ ] AOF replay on startup (after RDB load if both exist)
-- [ ] `BGREWRITEAOF` — compact AOF by writing minimal commands from current state
+- [x] Write every write command to AOF buffer in RESP format
+- [x] `appendfsync` policy: `always`, `everysec` (default), `no`
+- [x] Background fsync task for `everysec` mode
+- [x] AOF replay on startup (after RDB load if both exist)
+- [x] `BGREWRITEAOF` — compact AOF by writing minimal commands from current state
 - [ ] Multi-Part AOF (MP-AOF): base file (RDB format) + incremental files + manifest
 
 ### 5.4 Hybrid Persistence
 - [ ] `aof-use-rdb-preamble yes` — AOF base is RDB format (faster loads)
-- [ ] Startup loading priority: AOF preferred over RDB if AOF enabled
+- [x] Startup loading priority: AOF preferred over RDB if AOF enabled
 - [ ] `WAITAOF numlocal numreplicas timeout`
 
 ---
@@ -260,19 +260,19 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 ## Phase 6: Memory Management & Eviction
 
 ### 6.1 Memory Tracking
-- [ ] Track `used_memory` (via jemalloc stats or manual accounting)
-- [ ] `maxmemory` configuration
-- [ ] Per-key LRU clock (24-bit, seconds resolution) stored in key metadata
-- [ ] Update LRU clock on every key access
+- [x] Track `used_memory` (via jemalloc stats or manual accounting)
+- [x] `maxmemory` configuration
+- [x] Per-key LRU clock (24-bit, seconds resolution) stored in key metadata
+- [x] Update LRU clock on every key access
 
 ### 6.2 Eviction Policies
-- [ ] `noeviction` — return OOM errors on writes
-- [ ] `allkeys-lru` — approximate LRU across all keys (sample N, evict oldest)
-- [ ] `volatile-lru` — approximate LRU among keys with TTL
-- [ ] `allkeys-random`, `volatile-random`
-- [ ] `volatile-ttl` — evict shortest TTL
+- [x] `noeviction` — return OOM errors on writes
+- [x] `allkeys-lru` — approximate LRU across all keys (sample N, evict oldest)
+- [x] `volatile-lru` — approximate LRU among keys with TTL
+- [x] `allkeys-random`, `volatile-random`
+- [x] `volatile-ttl` — evict shortest TTL
 - [ ] Eviction pool (16 best candidates across sampling rounds)
-- [ ] Run eviction check before every write command when at memory limit
+- [x] Run eviction check before every write command when at memory limit
 
 ### 6.3 LFU Eviction
 - [ ] LFU counter: 8-bit logarithmic counter + 16-bit decay timestamp (reuses LRU field)
@@ -286,34 +286,34 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 ## Phase 7: ACL & Lua Scripting
 
 ### 7.1 ACL System
-- [ ] User registry with default user
+- [x] User registry with default user
 - [ ] Per-user: enabled/disabled, passwords, allowed commands, allowed keys, allowed channels
 - [ ] Command categories (`@read`, `@write`, `@admin`, `@dangerous`, etc.) with bitmask checks
 - [ ] Key pattern matching (`~pattern`, `%R~pattern`, `%W~pattern`)
-- [ ] `ACL SETUSER`, `ACL GETUSER`, `ACL DELUSER`, `ACL LIST`, `ACL USERS`
-- [ ] `ACL WHOAMI`, `ACL CAT [category]`
-- [ ] `ACL LOG [count|RESET]`
+- [x] `ACL SETUSER`, `ACL GETUSER`, `ACL DELUSER`, `ACL LIST`, `ACL USERS`
+- [x] `ACL WHOAMI`, `ACL CAT [category]`
+- [x] `ACL LOG [count|RESET]`
 - [ ] `ACL SAVE`, `ACL LOAD` (persist to file)
-- [ ] `AUTH username password` (RESP2 + RESP3)
+- [x] `AUTH username password` (RESP2 + RESP3)
 - [ ] ACL check on every command dispatch (fast path with bitmasks)
 
 ### 7.2 Lua Scripting
 - [ ] Embed Lua runtime (`mlua` crate)
-- [ ] `EVAL script numkeys key [key ...] arg [arg ...]`
-- [ ] `EVALSHA sha1 numkeys key [key ...] arg [arg ...]`
+- [x] `EVAL script numkeys key [key ...] arg [arg ...]`
+- [x] `EVALSHA sha1 numkeys key [key ...] arg [arg ...]`
 - [ ] `redis.call()` and `redis.pcall()` callbacks into command engine
 - [ ] SHA1-based script cache
-- [ ] `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`
+- [x] `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`
 - [ ] Atomic execution (block other commands during script)
 - [ ] `lua-time-limit` config, `SCRIPT KILL` for read-only scripts
 - [ ] `redis.log()`, `redis.error_reply()`, `redis.status_reply()` helpers
 
 ### 7.3 Redis Functions
-- [ ] `FUNCTION LOAD [REPLACE] library-code`
-- [ ] `FCALL function numkeys key [key ...] arg [arg ...]`
-- [ ] `FCALL_RO` (read-only variant)
-- [ ] `FUNCTION LIST`, `FUNCTION DELETE`, `FUNCTION DUMP`, `FUNCTION RESTORE`
-- [ ] `FUNCTION STATS`, `FUNCTION FLUSH`
+- [x] `FUNCTION LOAD [REPLACE] library-code`
+- [x] `FCALL function numkeys key [key ...] arg [arg ...]`
+- [x] `FCALL_RO` (read-only variant)
+- [x] `FUNCTION LIST`, `FUNCTION DELETE`, `FUNCTION DUMP`, `FUNCTION RESTORE`
+- [x] `FUNCTION STATS`, `FUNCTION FLUSH`
 - [ ] Persist functions in RDB/AOF
 
 ---
@@ -321,12 +321,12 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 ## Phase 8: Replication
 
 ### 8.1 Full Synchronization
-- [ ] Replication handshake: `REPLCONF`, `PSYNC ? -1`
+- [x] Replication handshake: `REPLCONF`, `PSYNC ? -1`
 - [ ] Master generates RDB and streams to replica
 - [ ] Replication backlog: circular buffer of serialized write commands
 - [ ] Replication ID + offset tracking
 - [ ] Buffer new writes during RDB generation for replay after transfer
-- [ ] `REPLICAOF host port` / `REPLICAOF NO ONE`
+- [x] `REPLICAOF host port` / `REPLICAOF NO ONE`
 
 ### 8.2 Partial Resynchronization
 - [ ] `PSYNC repl-id offset` — resume from backlog if offset is within range
@@ -336,7 +336,7 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 ### 8.3 Command Propagation
 - [ ] Propagate every write command to all connected replicas
 - [ ] Propagate to replication backlog simultaneously
-- [ ] `WAIT numreplicas timeout` — synchronous replication acknowledgment
+- [x] `WAIT numreplicas timeout` — synchronous replication acknowledgment
 - [ ] `replica-read-only` enforcement
 - [ ] `replica-serve-stale-data` configuration
 - [ ] `min-replicas-to-write`, `min-replicas-max-lag` write quorum
@@ -350,58 +350,58 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 ## Phase 9: Streams
 
 ### 9.1 Stream Data Structure
-- [ ] Stream entry storage (radix tree of entries, or simpler B-tree/Vec as first pass)
-- [ ] Auto-generated IDs: `<ms-timestamp>-<sequence>`
-- [ ] `XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold [LIMIT count]] *|id field value [...]`
-- [ ] `XLEN key`
-- [ ] `XRANGE key start end [COUNT count]`
-- [ ] `XREVRANGE key end start [COUNT count]`
-- [ ] `XDEL key id [id ...]` (tombstone)
-- [ ] `XTRIM key MAXLEN|MINID [=|~] threshold [LIMIT count]`
-- [ ] `XINFO STREAM key [FULL [COUNT count]]`
+- [x] Stream entry storage (radix tree of entries, or simpler B-tree/Vec as first pass)
+- [x] Auto-generated IDs: `<ms-timestamp>-<sequence>`
+- [x] `XADD key [NOMKSTREAM] [MAXLEN|MINID [=|~] threshold [LIMIT count]] *|id field value [...]`
+- [x] `XLEN key`
+- [x] `XRANGE key start end [COUNT count]`
+- [x] `XREVRANGE key end start [COUNT count]`
+- [x] `XDEL key id [id ...]` (tombstone)
+- [x] `XTRIM key MAXLEN|MINID [=|~] threshold [LIMIT count]`
+- [x] `XINFO STREAM key [FULL [COUNT count]]`
 
 ### 9.2 Stream Reading
-- [ ] `XREAD [COUNT count] [BLOCK ms] STREAMS key [key ...] id [id ...]`
-- [ ] Special ID `$` (new entries only)
+- [x] `XREAD [COUNT count] [BLOCK ms] STREAMS key [key ...] id [id ...]`
+- [x] Special ID `$` (new entries only)
 - [ ] Blocking XREAD with wake-on-XADD
 
 ### 9.3 Consumer Groups
-- [ ] Per-group state: last delivered ID, PEL (pending entries list)
-- [ ] Per-consumer state: name, PEL subset, seen-time, active-time
-- [ ] `XGROUP CREATE key groupname id|$ [MKSTREAM] [ENTRIESREAD n]`
-- [ ] `XGROUP DESTROY`, `XGROUP SETID`, `XGROUP CREATECONSUMER`, `XGROUP DELCONSUMER`
-- [ ] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK ms] [NOACK] STREAMS key [key ...] id [id ...]`
-- [ ] Special ID `>` (undelivered entries) vs specific ID (re-read pending)
-- [ ] `XACK key group id [id ...]`
-- [ ] `XPENDING key group [[IDLE min-idle] start end count [consumer]]`
-- [ ] `XCLAIM key group consumer min-idle-time id [id ...] [options]`
-- [ ] `XAUTOCLAIM key group consumer min-idle-time start [COUNT count]`
-- [ ] `XINFO GROUPS key`, `XINFO CONSUMERS key group`
+- [x] Per-group state: last delivered ID, PEL (pending entries list)
+- [x] Per-consumer state: name, PEL subset, seen-time, active-time
+- [x] `XGROUP CREATE key groupname id|$ [MKSTREAM] [ENTRIESREAD n]`
+- [x] `XGROUP DESTROY`, `XGROUP SETID`, `XGROUP CREATECONSUMER`, `XGROUP DELCONSUMER`
+- [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK ms] [NOACK] STREAMS key [key ...] id [id ...]`
+- [x] Special ID `>` (undelivered entries) vs specific ID (re-read pending)
+- [x] `XACK key group id [id ...]`
+- [x] `XPENDING key group [[IDLE min-idle] start end count [consumer]]`
+- [x] `XCLAIM key group consumer min-idle-time id [id ...] [options]`
+- [x] `XAUTOCLAIM key group consumer min-idle-time start [COUNT count]`
+- [x] `XINFO GROUPS key`, `XINFO CONSUMERS key group`
 
 ---
 
 ## Phase 10: Cluster
 
 ### 10.1 Hash Slot Routing
-- [ ] CRC16 implementation, `slot = CRC16(key) % 16384`
-- [ ] Hash tag support: `{tag}` extraction for multi-key co-location
+- [x] CRC16 implementation, `slot = CRC16(key) % 16384`
+- [x] Hash tag support: `{tag}` extraction for multi-key co-location
 - [ ] Slot ownership table: `[u16; 16384]` mapping slot -> node
 - [ ] Multi-key command validation: all keys must resolve to same slot
-- [ ] `CLUSTER KEYSLOT key`, `CLUSTER COUNTKEYSINSLOT slot`, `CLUSTER GETKEYSINSLOT slot count`
+- [x] `CLUSTER KEYSLOT key`, `CLUSTER COUNTKEYSINSLOT slot`, `CLUSTER GETKEYSINSLOT slot count`
 
 ### 10.2 Cluster Bus (Gossip Protocol)
 - [ ] Separate TCP port (main port + 10000) for node-to-node communication
 - [ ] Binary gossip protocol: ping/pong with node state, slot info, flags
 - [ ] Node discovery: `CLUSTER MEET ip port`
 - [ ] Failure detection: mark nodes as PFAIL (suspected) -> FAIL (confirmed by majority)
-- [ ] `CLUSTER NODES`, `CLUSTER INFO`, `CLUSTER SHARDS`, `CLUSTER SLOTS`
+- [x] `CLUSTER NODES`, `CLUSTER INFO`, `CLUSTER SHARDS`, `CLUSTER SLOTS`
 
 ### 10.3 Client Redirection
 - [ ] `-MOVED slot host:port` for permanent redirects
 - [ ] `-ASK slot host:port` for in-progress migrations
-- [ ] `ASKING` command (allow next command on importing node)
+- [x] `ASKING` command (allow next command on importing node)
 - [ ] `-CROSSSLOTS` error for multi-slot commands
-- [ ] `READONLY` / `READWRITE` (allow reads on replicas in cluster mode)
+- [x] `READONLY` / `READWRITE` (allow reads on replicas in cluster mode)
 
 ### 10.4 Slot Migration
 - [ ] `CLUSTER SETSLOT slot MIGRATING node-id` / `IMPORTING node-id` / `NODE node-id` / `STABLE`
@@ -414,7 +414,7 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 - [ ] Epoch-based configuration versioning
 - [ ] `CLUSTER FAILOVER [FORCE|TAKEOVER]`
 - [ ] `CLUSTER REPLICATE node-id`
-- [ ] `CLUSTER RESET [HARD|SOFT]`
+- [x] `CLUSTER RESET [HARD|SOFT]`
 - [ ] `CLUSTER FORGET node-id`
 - [ ] Automatic failover when master is detected as FAIL
 
@@ -433,12 +433,12 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 - [ ] Integrate with Pub/Sub system
 
 ### 11.2 Client-Side Caching
-- [ ] `CLIENT TRACKING ON|OFF [REDIRECT id] [PREFIX prefix] [BCAST] [OPTIN] [OPTOUT] [NOLOOP]`
+- [x] `CLIENT TRACKING ON|OFF [REDIRECT id] [PREFIX prefix] [BCAST] [OPTIN] [OPTOUT] [NOLOOP]`
 - [ ] Track keys read by each client
 - [ ] Send invalidation messages on key mutation
 - [ ] Broadcasting mode with prefix matching
-- [ ] `CLIENT CACHING YES|NO` (per-command opt-in/out)
-- [ ] `CLIENT NO-TOUCH ON|OFF`
+- [x] `CLIENT CACHING YES|NO` (per-command opt-in/out)
+- [x] `CLIENT NO-TOUCH ON|OFF`
 
 ### 11.3 I/O Threading
 - [ ] Offload socket reads to I/O thread pool
@@ -450,18 +450,18 @@ A high-performance, Redis/Valkey-compatible in-memory data store written in Rust
 - [ ] Trait-based plugin API: `RCacheModule` trait for custom commands and data types
 - [ ] Command registration from modules
 - [ ] Custom data type registration with RDB save/load, AOF rewrite hooks
-- [ ] `MODULE LOAD`, `MODULE UNLOAD`, `MODULE LIST`
+- [x] `MODULE LOAD`, `MODULE UNLOAD`, `MODULE LIST`
 - [ ] Timer and event hook APIs for modules
 
 ### 11.5 Per-Field Hash Expiration
 - [ ] Per-field TTL tracking within hash data structure
-- [ ] `HEXPIRE`, `HPEXPIRE`, `HEXPIREAT`, `HPEXPIREAT`
-- [ ] `HPERSIST`, `HTTL`, `HPTTL`, `HEXPIRETIME`, `HPEXPIRETIME`
+- [x] `HEXPIRE`, `HPEXPIRE`, `HEXPIREAT`, `HPEXPIREAT`
+- [x] `HPERSIST`, `HTTL`, `HPTTL`, `HEXPIRETIME`, `HPEXPIRETIME`
 - [ ] Active + lazy expiration for hash fields
 
 ### 11.6 LCS & Advanced String Operations
-- [ ] `LCS key1 key2 [LEN] [IDX] [MINMATCHLEN len] [WITHMATCHLEN]`
-- [ ] `SUBSTR key start end` (alias for GETRANGE)
+- [x] `LCS key1 key2 [LEN] [IDX] [MINMATCHLEN len] [WITHMATCHLEN]`
+- [x] `SUBSTR key start end` (alias for GETRANGE)
 
 ---
 
