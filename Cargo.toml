@@ -1,0 +1,16 @@
+[package]
+name = "rcache"
+version = "0.2.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+crc16 = "0.4"
+
+[dev-dependencies]
+redis = { version = "0.27", features = ["tokio-comp"] }
