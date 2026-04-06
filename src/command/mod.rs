@@ -13,5 +13,11 @@ mod bitmap;
 mod hyperloglog;
 mod geo;
 mod persistence_cmds;
+mod acl;
+mod scripting;
+mod replication;
+mod stream;
+mod cluster;
+mod advanced;
 
 pub use registry::{CommandRegistry, CommandContext};

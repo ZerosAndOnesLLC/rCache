@@ -144,6 +144,20 @@ fn rewrite_aof_from_store(store: &crate::storage::Store, path: &std::path::Path)
                         write_cmd(&mut writer, &args)?;
                     }
                 }
+                RedisObject::Stream(stream) => {
+                    for (id, fields) in &stream.entries {
+                        let mut args = vec![
+                            Bytes::from("XADD"),
+                            key.clone(),
+                            Bytes::from(id.to_string()),
+                        ];
+                        for (k, v) in fields {
+                            args.push(k.clone());
+                            args.push(v.clone());
+                        }
+                        write_cmd(&mut writer, &args)?;
+                    }
+                }
             }
 
             if let Some(expire_at) = expires.get(key) {

@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::storage::types::{RedisObject, SortedSetData};
+use crate::storage::types::{RedisObject, SortedSetData, StreamData, StreamId};
 use crate::storage::Store;
 
 /// RDB file magic header.
@@ -22,6 +22,7 @@ const RDB_TYPE_LIST: u8 = 1;
 const RDB_TYPE_SET: u8 = 2;
 const RDB_TYPE_SORTEDSET: u8 = 3;
 const RDB_TYPE_HASH: u8 = 4;
+const RDB_TYPE_STREAM: u8 = 5;
 
 /// Save the entire store to an RDB file at the given path.
 pub fn save(store: &Store, path: &Path) -> io::Result<()> {
@@ -108,6 +109,35 @@ pub fn save(store: &Store, path: &Path) -> io::Result<()> {
                     for (field, val) in hash {
                         write_bytes(&mut file, field)?;
                         write_bytes(&mut file, val)?;
+                    }
+                }
+                RedisObject::Stream(stream) => {
+                    file.write_all(&[RDB_TYPE_STREAM])?;
+                    write_bytes(&mut file, key)?;
+                    // Write last_id
+                    file.write_all(&stream.last_id.ms.to_le_bytes())?;
+                    file.write_all(&stream.last_id.seq.to_le_bytes())?;
+                    // Write entries
+                    write_u32_le(&mut file, stream.entries.len() as u32)?;
+                    for (id, fields) in &stream.entries {
+                        file.write_all(&id.ms.to_le_bytes())?;
+                        file.write_all(&id.seq.to_le_bytes())?;
+                        write_u32_le(&mut file, fields.len() as u32)?;
+                        for (k, v) in fields {
+                            write_bytes(&mut file, k)?;
+                            write_bytes(&mut file, v)?;
+                        }
+                    }
+                    // Write consumer groups
+                    write_u32_le(&mut file, stream.groups.len() as u32)?;
+                    for (name, group) in &stream.groups {
+                        write_bytes(&mut file, name)?;
+                        file.write_all(&group.last_delivered.ms.to_le_bytes())?;
+                        file.write_all(&group.last_delivered.seq.to_le_bytes())?;
+                        // Write PEL count (we skip persisting individual PEL entries for simplicity)
+                        write_u32_le(&mut file, 0u32)?;
+                        // Write consumers count
+                        write_u32_le(&mut file, 0u32)?;
                     }
                 }
             }
@@ -210,7 +240,7 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
                     db.remove(&key);
                 }
             }
-            type_byte @ (RDB_TYPE_STRING | RDB_TYPE_LIST | RDB_TYPE_SET | RDB_TYPE_SORTEDSET | RDB_TYPE_HASH) => {
+            type_byte @ (RDB_TYPE_STRING | RDB_TYPE_LIST | RDB_TYPE_SET | RDB_TYPE_SORTEDSET | RDB_TYPE_HASH | RDB_TYPE_STREAM) => {
                 let (key, value, new_cursor) = read_entry(&data, cursor, type_byte)?;
                 cursor = new_cursor;
                 store.db_mut(current_db).set_raw(key, value);
@@ -287,6 +317,71 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
                 hash.insert(field, val);
             }
             RedisObject::Hash(hash)
+        }
+        RDB_TYPE_STREAM => {
+            // Read last_id
+            if cursor + 16 > data.len() {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated stream last_id"));
+            }
+            let last_ms = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+            cursor += 8;
+            let last_seq = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+            cursor += 8;
+
+            let mut stream = StreamData::new();
+            stream.last_id = StreamId { ms: last_ms, seq: last_seq };
+
+            // Read entries
+            let (entry_count, c) = read_u32_le(data, cursor)?;
+            cursor = c;
+            for _ in 0..entry_count {
+                if cursor + 16 > data.len() {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated stream entry id"));
+                }
+                let ms = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                cursor += 8;
+                let seq = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                cursor += 8;
+                let (field_count, c) = read_u32_le(data, cursor)?;
+                cursor = c;
+                let mut fields = Vec::with_capacity(field_count as usize);
+                for _ in 0..field_count {
+                    let (k, c) = read_bytes(data, cursor)?;
+                    cursor = c;
+                    let (v, c) = read_bytes(data, cursor)?;
+                    cursor = c;
+                    fields.push((k, v));
+                }
+                stream.entries.insert(StreamId { ms, seq }, fields);
+            }
+
+            // Read consumer groups
+            let (group_count, c) = read_u32_le(data, cursor)?;
+            cursor = c;
+            for _ in 0..group_count {
+                let (name, c) = read_bytes(data, cursor)?;
+                cursor = c;
+                if cursor + 16 > data.len() {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated group last_delivered"));
+                }
+                let ld_ms = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                cursor += 8;
+                let ld_seq = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                cursor += 8;
+                // Skip PEL entries
+                let (pel_count, c) = read_u32_le(data, cursor)?;
+                cursor = c;
+                let _ = pel_count; // PEL entries not persisted, just skip count
+                // Skip consumer entries
+                let (consumer_count, c) = read_u32_le(data, cursor)?;
+                cursor = c;
+                let _ = consumer_count;
+
+                let group = crate::storage::types::ConsumerGroup::new(StreamId { ms: ld_ms, seq: ld_seq });
+                stream.groups.insert(name, group);
+            }
+
+            RedisObject::Stream(stream)
         }
         _ => {
             return Err(io::Error::new(

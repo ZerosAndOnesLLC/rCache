@@ -156,6 +156,20 @@ impl AofWriter {
                                 write_resp_command(&mut writer, &args)?;
                             }
                         }
+                        RedisObject::Stream(stream) => {
+                            for (id, fields) in &stream.entries {
+                                let mut args = vec![
+                                    Bytes::from("XADD"),
+                                    key.clone(),
+                                    Bytes::from(id.to_string()),
+                                ];
+                                for (k, v) in fields {
+                                    args.push(k.clone());
+                                    args.push(v.clone());
+                                }
+                                write_resp_command(&mut writer, &args)?;
+                            }
+                        }
                     }
 
                     // Write PEXPIREAT if the key has an expiry

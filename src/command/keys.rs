@@ -367,6 +367,7 @@ pub fn cmd_sort(ctx: &mut CommandContext) -> RespValue {
         Some(RedisObject::SortedSet(zset)) => {
             zset.range_by_index(0, -1).into_iter().map(|(m, _)| m).collect()
         }
+        Some(RedisObject::Stream(_)) => return RespValue::wrong_type(),
         Some(_) => return RespValue::wrong_type(),
         None => return RespValue::array(vec![]),
     };

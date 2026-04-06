@@ -743,6 +743,12 @@ fn compute_key_version(db: &mut crate::storage::Database, key: &Bytes) -> Option
                 score.to_bits().hash(&mut hasher);
             }
         }
+        crate::storage::RedisObject::Stream(s) => {
+            5u8.hash(&mut hasher);
+            s.entries.len().hash(&mut hasher);
+            s.last_id.ms.hash(&mut hasher);
+            s.last_id.seq.hash(&mut hasher);
+        }
     }
 
     Some(hasher.finish())

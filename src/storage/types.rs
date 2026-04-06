@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::fmt;
 
 /// Internal Redis data types.
 #[derive(Debug, Clone)]
@@ -9,24 +10,10 @@ pub enum RedisObject {
     Set(HashSet<Bytes>),
     Hash(HashMap<Bytes, Bytes>),
     SortedSet(SortedSetData),
+    Stream(StreamData),
 }
 
 impl RedisObject {
-    /// Estimate the memory usage of this object in bytes.
-    pub fn estimate_memory(&self) -> usize {
-        match self {
-            RedisObject::String(b) => b.len(),
-            RedisObject::List(l) => l.iter().map(|v| v.len() + 16).sum::<usize>() + 64,
-            RedisObject::Set(s) => s.iter().map(|v| v.len() + 16).sum::<usize>() + 64,
-            RedisObject::Hash(h) => h.iter().map(|(k, v)| k.len() + v.len() + 32).sum::<usize>() + 64,
-            RedisObject::SortedSet(z) => {
-                z.members.iter().map(|(k, _)| k.len() + 8 + 32).sum::<usize>()
-                    + z.scores.len() * 48
-                    + 128
-            }
-        }
-    }
-
     pub fn type_name(&self) -> &'static str {
         match self {
             RedisObject::String(_) => "string",
@@ -34,6 +21,7 @@ impl RedisObject {
             RedisObject::Set(_) => "set",
             RedisObject::Hash(_) => "hash",
             RedisObject::SortedSet(_) => "zset",
+            RedisObject::Stream(_) => "stream",
         }
     }
 
@@ -78,6 +66,46 @@ impl RedisObject {
                 } else {
                     "skiplist"
                 }
+            }
+            RedisObject::Stream(s) => {
+                if s.entries.len() <= 128 {
+                    "listpack"
+                } else {
+                    "stream"
+                }
+            }
+        }
+    }
+}
+
+impl RedisObject {
+    /// Estimate the memory usage of this value in bytes.
+    pub fn estimate_memory(&self) -> usize {
+        match self {
+            RedisObject::String(b) => b.len() + 32,
+            RedisObject::List(l) => {
+                let items: usize = l.iter().map(|v| v.len() + 24).sum();
+                items + 64
+            }
+            RedisObject::Set(s) => {
+                let items: usize = s.iter().map(|v| v.len() + 32).sum();
+                items + 64
+            }
+            RedisObject::Hash(h) => {
+                let items: usize = h.iter().map(|(k, v)| k.len() + v.len() + 48).sum();
+                items + 64
+            }
+            RedisObject::SortedSet(z) => {
+                let items: usize = z.members.iter().map(|(k, _)| k.len() + 56).sum();
+                items + 64
+            }
+            RedisObject::Stream(s) => {
+                let entries: usize = s.entries.iter().map(|(_, fields)| {
+                    let field_size: usize = fields.iter().map(|(k, v)| k.len() + v.len() + 48).sum();
+                    field_size + 32
+                }).sum();
+                let groups: usize = s.groups.len() * 128;
+                entries + groups + 64
             }
         }
     }
@@ -245,4 +273,95 @@ impl SortedSetData {
         let mut rng = rand::thread_rng();
         self.members.iter().choose(&mut rng).map(|(k, &v)| (k, v))
     }
+}
+
+// === Stream types ===
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StreamId {
+    pub ms: u64,
+    pub seq: u64,
+}
+
+impl StreamId {
+    pub fn zero() -> Self {
+        Self { ms: 0, seq: 0 }
+    }
+
+    pub fn min() -> Self {
+        Self { ms: 0, seq: 0 }
+    }
+
+    pub fn max() -> Self {
+        Self { ms: u64::MAX, seq: u64::MAX }
+    }
+}
+
+impl fmt::Display for StreamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}", self.ms, self.seq)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamData {
+    pub entries: BTreeMap<StreamId, Vec<(Bytes, Bytes)>>,
+    pub last_id: StreamId,
+    pub groups: HashMap<Bytes, ConsumerGroup>,
+}
+
+impl StreamData {
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            last_id: StreamId::zero(),
+            groups: HashMap::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn first_id(&self) -> Option<&StreamId> {
+        self.entries.keys().next()
+    }
+
+    pub fn last_entry_id(&self) -> Option<&StreamId> {
+        self.entries.keys().next_back()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ConsumerGroup {
+    pub last_delivered: StreamId,
+    pub pel: BTreeMap<StreamId, PendingEntry>,
+    pub consumers: HashMap<Bytes, ConsumerData>,
+}
+
+impl ConsumerGroup {
+    pub fn new(last_delivered: StreamId) -> Self {
+        Self {
+            last_delivered,
+            pel: BTreeMap::new(),
+            consumers: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingEntry {
+    pub consumer: Bytes,
+    pub delivery_time: u64,
+    pub delivery_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConsumerData {
+    pub pel: HashSet<StreamId>,
+    pub seen_time: u64,
 }

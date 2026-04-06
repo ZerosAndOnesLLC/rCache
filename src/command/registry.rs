@@ -214,40 +214,62 @@ impl CommandRegistry {
         self.register("ZDIFFSTORE", super::sorted_set::cmd_zdiffstore, -4);
         self.register("ZLEXCOUNT", super::sorted_set::cmd_zlexcount, 4);
 
+        // === Sort ===
+        self.register("SORT", super::keys::cmd_sort, -2);
+        self.register("SORT_RO", super::keys::cmd_sort, -2);
+
+        // === ACL commands ===
+        self.register("ACL", super::acl::cmd_acl, -2);
+
+        // === Scripting stubs ===
+        self.register("EVAL", super::scripting::cmd_eval, -3);
+        self.register("EVALSHA", super::scripting::cmd_evalsha, -3);
+        self.register("SCRIPT", super::scripting::cmd_script, -2);
+        self.register("FUNCTION", super::scripting::cmd_function, -2);
+        self.register("FCALL", super::scripting::cmd_fcall, -3);
+        self.register("FCALL_RO", super::scripting::cmd_fcall_ro, -3);
+
+        // === Replication stubs ===
+        self.register("REPLICAOF", super::replication::cmd_replicaof, 3);
+        self.register("SLAVEOF", super::replication::cmd_replicaof, 3); // alias
+        self.register("REPLCONF", super::replication::cmd_replconf, -1);
+        self.register("PSYNC", super::replication::cmd_psync, 3);
+        self.register("WAIT", super::replication::cmd_wait, 3);
+
+        // === Stream commands ===
+        self.register("XADD", super::stream::cmd_xadd, -5);
+        self.register("XLEN", super::stream::cmd_xlen, 2);
+        self.register("XRANGE", super::stream::cmd_xrange, -4);
+        self.register("XREVRANGE", super::stream::cmd_xrevrange, -4);
+        self.register("XDEL", super::stream::cmd_xdel, -3);
+        self.register("XTRIM", super::stream::cmd_xtrim, -4);
+        self.register("XREAD", super::stream::cmd_xread, -4);
+        self.register("XINFO", super::stream::cmd_xinfo, -3);
+        self.register("XGROUP", super::stream::cmd_xgroup, -2);
+        self.register("XREADGROUP", super::stream::cmd_xreadgroup, -7);
+        self.register("XACK", super::stream::cmd_xack, -4);
+        self.register("XPENDING", super::stream::cmd_xpending, -3);
+        self.register("XCLAIM", super::stream::cmd_xclaim, -6);
+        self.register("XAUTOCLAIM", super::stream::cmd_xautoclaim, -7);
+
+        // === Blocking list ops (non-blocking stubs) ===
+        self.register("BLPOP", super::list::cmd_blpop, -3);
+        self.register("BRPOP", super::list::cmd_brpop, -3);
+        self.register("BLMOVE", super::list::cmd_blmove, 6);
+        self.register("BLMPOP", super::list::cmd_blmpop, -5);
+
+        // === Remaining sorted set ===
         self.register("ZRANGESTORE", super::sorted_set::cmd_zrangestore, -5);
         self.register("ZUNION", super::sorted_set::cmd_zunion, -3);
         self.register("ZINTER", super::sorted_set::cmd_zinter, -3);
         self.register("ZDIFF", super::sorted_set::cmd_zdiff, -3);
         self.register("ZINTERCARD", super::sorted_set::cmd_zintercard, -3);
         self.register("ZMPOP", super::sorted_set::cmd_zmpop, -4);
-
-        // === Blocking sorted set stubs ===
         self.register("BZPOPMIN", super::sorted_set::cmd_bzpopmin, -3);
         self.register("BZPOPMAX", super::sorted_set::cmd_bzpopmax, -3);
         self.register("BZMPOP", super::sorted_set::cmd_bzmpop, -5);
 
-        // === Blocking list stubs ===
-        self.register("BLPOP", super::list::cmd_blpop, -3);
-        self.register("BRPOP", super::list::cmd_brpop, -3);
-        self.register("BLMOVE", super::list::cmd_blmove, 6);
-        self.register("BLMPOP", super::list::cmd_blmpop, -5);
-
-        // === Pub/Sub ===
-        self.register("PUBLISH", super::pubsub::cmd_publish, 3);
-        self.register("SUBSCRIBE", super::pubsub::cmd_subscribe, -2);
-        self.register("UNSUBSCRIBE", super::pubsub::cmd_unsubscribe, -1);
-        self.register("PSUBSCRIBE", super::pubsub::cmd_psubscribe, -2);
-        self.register("PUNSUBSCRIBE", super::pubsub::cmd_punsubscribe, -1);
-        self.register("PUBSUB", super::pubsub::cmd_pubsub, -2);
-
-        // === Transactions ===
-        self.register("MULTI", super::transaction::cmd_multi, 1);
-        self.register("EXEC", super::transaction::cmd_exec, 1);
-        self.register("DISCARD", super::transaction::cmd_discard, 1);
-        self.register("WATCH", super::transaction::cmd_watch, -2);
-        self.register("UNWATCH", super::transaction::cmd_unwatch, 1);
-
-        // === Bitmap commands ===
+        // === Bitmap ===
         self.register("SETBIT", super::bitmap::cmd_setbit, 4);
         self.register("GETBIT", super::bitmap::cmd_getbit, 3);
         self.register("BITCOUNT", super::bitmap::cmd_bitcount, -2);
@@ -278,16 +300,37 @@ impl CommandRegistry {
         self.register("HELLO", super::server_cmds::cmd_hello, -1);
         self.register("RESET", super::server_cmds::cmd_reset, 1);
         self.register("DEBUG", super::server_cmds::cmd_debug, -1);
-        self.register("WAIT", super::server_cmds::cmd_wait, 3);
-
-        // === Sort ===
-        self.register("SORT", super::keys::cmd_sort, -2);
-        self.register("SORT_RO", super::keys::cmd_sort, -2);
 
         // === Persistence commands ===
         self.register("SAVE", super::persistence_cmds::cmd_save, 1);
         self.register("BGSAVE", super::persistence_cmds::cmd_bgsave, 1);
         self.register("LASTSAVE", super::persistence_cmds::cmd_lastsave, 1);
         self.register("BGREWRITEAOF", super::persistence_cmds::cmd_bgrewriteaof, 1);
+
+        // === Cluster commands (Phase 10) ===
+        self.register("CLUSTER", super::cluster::cmd_cluster, -2);
+        self.register("READONLY", super::cluster::cmd_readonly, 1);
+        self.register("READWRITE", super::cluster::cmd_readwrite, 1);
+        self.register("ASKING", super::cluster::cmd_asking, 1);
+
+        // === Module stubs (Phase 11) ===
+        self.register("MODULE", super::advanced::cmd_module, -2);
+
+        // === Latency (Phase 11) ===
+        self.register("LATENCY", super::advanced::cmd_latency, -2);
+
+        // === Per-field hash expiration stubs (Phase 11) ===
+        self.register("HEXPIRE", super::advanced::cmd_hexpire, -4);
+        self.register("HPEXPIRE", super::advanced::cmd_hpexpire, -4);
+        self.register("HEXPIREAT", super::advanced::cmd_hexpireat, -4);
+        self.register("HPEXPIREAT", super::advanced::cmd_hpexpireat, -4);
+        self.register("HPERSIST", super::advanced::cmd_hpersist, -3);
+        self.register("HTTL", super::advanced::cmd_httl, -3);
+        self.register("HPTTL", super::advanced::cmd_hpttl, -3);
+        self.register("HEXPIRETIME", super::advanced::cmd_hexpiretime, -3);
+        self.register("HPEXPIRETIME", super::advanced::cmd_hpexpiretime, -3);
+
+        // === LCS (Phase 11) ===
+        self.register("LCS", super::advanced::cmd_lcs, -3);
     }
 }
