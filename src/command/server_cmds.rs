@@ -1,5 +1,7 @@
+use bytes::Bytes;
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::protocol::RespValue;
+use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
 pub fn cmd_ping(ctx: &mut CommandContext) -> RespValue {
@@ -137,3 +139,210 @@ pub fn cmd_command(ctx: &mut CommandContext) -> RespValue {
         RespValue::array(vec![])
     }
 }
+
+pub fn cmd_config(ctx: &mut CommandContext) -> RespValue {
+    if ctx.args.len() < 2 {
+        return RespValue::wrong_arity("config");
+    }
+
+    let subcmd = String::from_utf8_lossy(&ctx.args[1]).to_uppercase();
+    match subcmd.as_str() {
+        "GET" => {
+            if ctx.args.len() < 3 {
+                return RespValue::wrong_arity("config|get");
+            }
+            let pattern = String::from_utf8_lossy(&ctx.args[2]).to_string();
+            let mut results = Vec::new();
+
+            // Return known config parameters matching the pattern
+            let configs: Vec<(&str, String)> = vec![
+                ("maxmemory", "0".to_string()),
+                ("maxmemory-policy", "noeviction".to_string()),
+                ("hz", "10".to_string()),
+                ("databases", "16".to_string()),
+                ("maxclients", "10000".to_string()),
+                ("timeout", "0".to_string()),
+                ("tcp-keepalive", "300".to_string()),
+                ("lfu-log-factor", "10".to_string()),
+                ("lfu-decay-time", "1".to_string()),
+                ("save", "".to_string()),
+                ("appendonly", "no".to_string()),
+                ("bind", "0.0.0.0".to_string()),
+            ];
+
+            for (name, value) in &configs {
+                if pattern == "*" || crate::storage::db::glob_match(&pattern, name) {
+                    results.push(RespValue::bulk_string(Bytes::from(name.to_string())));
+                    results.push(RespValue::bulk_string(Bytes::from(value.clone())));
+                }
+            }
+
+            RespValue::array(results)
+        }
+        "SET" => {
+            if ctx.args.len() < 4 {
+                return RespValue::wrong_arity("config|set");
+            }
+            // Accept but mostly ignore config sets for compatibility
+            RespValue::ok()
+        }
+        "RESETSTAT" => RespValue::ok(),
+        "REWRITE" => RespValue::ok(),
+        _ => RespValue::error(format!("ERR unknown subcommand or wrong number of arguments for 'config|{}'", subcmd.to_lowercase())),
+    }
+}
+
+pub fn cmd_client(ctx: &mut CommandContext) -> RespValue {
+    if ctx.args.len() < 2 {
+        return RespValue::wrong_arity("client");
+    }
+
+    let subcmd = String::from_utf8_lossy(&ctx.args[1]).to_uppercase();
+    match subcmd.as_str() {
+        "LIST" => {
+            // Return minimal client info
+            let info = "id=1 addr=127.0.0.1:0 fd=5 name= db=0 sub=0 psub=0 multi=-1 qbuf=0 qbuf-free=0 obl=0 oll=0 omem=0 events=r cmd=client\r\n";
+            RespValue::bulk_string(Bytes::from(info))
+        }
+        "GETNAME" => {
+            // Client name is handled in connection layer; return null as default
+            RespValue::Null
+        }
+        "SETNAME" => {
+            if ctx.args.len() < 3 {
+                return RespValue::wrong_arity("client|setname");
+            }
+            // Accept but handled in connection layer
+            RespValue::ok()
+        }
+        "ID" => {
+            // Return a default client ID; actual ID is in connection layer
+            RespValue::integer(1)
+        }
+        "INFO" => {
+            let info = "id=1 addr=127.0.0.1:0 fd=5 name= db=0 sub=0 psub=0 multi=-1 qbuf=0 qbuf-free=0 obl=0 oll=0 omem=0 events=r cmd=client\r\n";
+            RespValue::bulk_string(Bytes::from(info))
+        }
+        "NO-EVICT" => RespValue::ok(),
+        "NO-TOUCH" => RespValue::ok(),
+        _ => RespValue::error(format!("ERR unknown subcommand or wrong number of arguments for 'client|{}'", subcmd.to_lowercase())),
+    }
+}
+
+pub fn cmd_slowlog(ctx: &mut CommandContext) -> RespValue {
+    if ctx.args.len() < 2 {
+        return RespValue::wrong_arity("slowlog");
+    }
+
+    let subcmd = String::from_utf8_lossy(&ctx.args[1]).to_uppercase();
+    match subcmd.as_str() {
+        "GET" => {
+            // Return empty slow log for now
+            RespValue::array(vec![])
+        }
+        "LEN" => RespValue::integer(0),
+        "RESET" => RespValue::ok(),
+        _ => RespValue::error(format!("ERR unknown subcommand or wrong number of arguments for 'slowlog|{}'", subcmd.to_lowercase())),
+    }
+}
+
+pub fn cmd_memory(ctx: &mut CommandContext) -> RespValue {
+    if ctx.args.len() < 2 {
+        return RespValue::wrong_arity("memory");
+    }
+
+    let subcmd = String::from_utf8_lossy(&ctx.args[1]).to_uppercase();
+    match subcmd.as_str() {
+        "USAGE" => {
+            if ctx.args.len() < 3 {
+                return RespValue::wrong_arity("memory|usage");
+            }
+            let key = ctx.args[2].clone();
+            let db = ctx.db();
+            match db.get(&key) {
+                Some(obj) => {
+                    // Approximate memory usage
+                    let size = match obj {
+                        RedisObject::String(b) => 56 + b.len(),
+                        RedisObject::List(l) => 128 + l.iter().map(|v| 64 + v.len()).sum::<usize>(),
+                        RedisObject::Set(s) => 240 + s.iter().map(|v| 64 + v.len()).sum::<usize>(),
+                        RedisObject::Hash(h) => 240 + h.iter().map(|(k, v)| 64 + k.len() + v.len()).sum::<usize>(),
+                        RedisObject::SortedSet(z) => 240 + z.members.iter().map(|(k, _)| 128 + k.len()).sum::<usize>(),
+                    };
+                    RespValue::integer(size as i64)
+                }
+                None => RespValue::Null,
+            }
+        }
+        "DOCTOR" => RespValue::bulk_string(Bytes::from("Sam, I have no memory problems")),
+        "HELP" => {
+            RespValue::array(vec![
+                RespValue::simple_string("MEMORY USAGE <key> [SAMPLES <count>] - Estimate memory usage of key"),
+                RespValue::simple_string("MEMORY DOCTOR - Outputs memory problems report"),
+                RespValue::simple_string("MEMORY HELP - Show this help"),
+            ])
+        }
+        _ => RespValue::error(format!("ERR unknown subcommand or wrong number of arguments for 'memory|{}'", subcmd.to_lowercase())),
+    }
+}
+
+pub fn cmd_lolwut(_ctx: &mut CommandContext) -> RespValue {
+    let art = r#"
+   _____       _____           _
+  / ____|     / ____|         | |
+ | |     __ _| |     __ _  ___| |__   ___
+ | |    / _` | |    / _` |/ __| '_ \ / _ \
+ | |___| (_| | |___| (_| | (__| | | |  __/
+  \_____\__,_|\_____\__,_|\___|_| |_|\___|
+
+rCache - Redis-compatible in-memory data store
+"#;
+    RespValue::bulk_string(Bytes::from(art.trim_start_matches('\n')))
+}
+
+pub fn cmd_hello(ctx: &mut CommandContext) -> RespValue {
+    // HELLO [protover [AUTH username password] [SETNAME clientname]]
+    // We only support RESP2, so we acknowledge the command but stay in RESP2 mode
+    let mut _proto = 2;
+
+    if ctx.args.len() > 1 {
+        _proto = match String::from_utf8_lossy(&ctx.args[1]).parse::<i64>() {
+            Ok(v) if v == 2 || v == 3 => v,
+            Ok(v) => return RespValue::error(format!("NOPROTO unsupported protocol version {}", v)),
+            Err(_) => return RespValue::error("ERR Protocol version is not an integer or out of range"),
+        };
+    }
+
+    // Return server info as an array of key-value pairs (RESP2 compatible)
+    RespValue::array(vec![
+        RespValue::bulk_string(Bytes::from("server")),
+        RespValue::bulk_string(Bytes::from("rcache")),
+        RespValue::bulk_string(Bytes::from("version")),
+        RespValue::bulk_string(Bytes::from(env!("CARGO_PKG_VERSION"))),
+        RespValue::bulk_string(Bytes::from("proto")),
+        RespValue::integer(2),
+        RespValue::bulk_string(Bytes::from("id")),
+        RespValue::integer(1),
+        RespValue::bulk_string(Bytes::from("mode")),
+        RespValue::bulk_string(Bytes::from("standalone")),
+        RespValue::bulk_string(Bytes::from("role")),
+        RespValue::bulk_string(Bytes::from("master")),
+        RespValue::bulk_string(Bytes::from("modules")),
+        RespValue::array(vec![]),
+    ])
+}
+
+pub fn cmd_reset(_ctx: &mut CommandContext) -> RespValue {
+    // RESET command resets the connection state
+    RespValue::simple_string("RESET")
+}
+
+pub fn cmd_debug(_ctx: &mut CommandContext) -> RespValue {
+    RespValue::ok()
+}
+
+pub fn cmd_wait(_ctx: &mut CommandContext) -> RespValue {
+    // In standalone mode, WAIT always returns 0 (no replicas)
+    RespValue::integer(0)
+}
+

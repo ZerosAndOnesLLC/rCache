@@ -7,5 +7,11 @@ mod set;
 mod hash;
 mod sorted_set;
 mod scan;
+mod pubsub;
+mod transaction;
+mod bitmap;
+mod hyperloglog;
+mod geo;
+mod persistence_cmds;
 
 pub use registry::{CommandRegistry, CommandContext};

@@ -12,6 +12,21 @@ pub enum RedisObject {
 }
 
 impl RedisObject {
+    /// Estimate the memory usage of this object in bytes.
+    pub fn estimate_memory(&self) -> usize {
+        match self {
+            RedisObject::String(b) => b.len(),
+            RedisObject::List(l) => l.iter().map(|v| v.len() + 16).sum::<usize>() + 64,
+            RedisObject::Set(s) => s.iter().map(|v| v.len() + 16).sum::<usize>() + 64,
+            RedisObject::Hash(h) => h.iter().map(|(k, v)| k.len() + v.len() + 32).sum::<usize>() + 64,
+            RedisObject::SortedSet(z) => {
+                z.members.iter().map(|(k, _)| k.len() + 8 + 32).sum::<usize>()
+                    + z.scores.len() * 48
+                    + 128
+            }
+        }
+    }
+
     pub fn type_name(&self) -> &'static str {
         match self {
             RedisObject::String(_) => "string",

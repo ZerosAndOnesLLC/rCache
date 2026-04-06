@@ -214,8 +214,80 @@ impl CommandRegistry {
         self.register("ZDIFFSTORE", super::sorted_set::cmd_zdiffstore, -4);
         self.register("ZLEXCOUNT", super::sorted_set::cmd_zlexcount, 4);
 
+        self.register("ZRANGESTORE", super::sorted_set::cmd_zrangestore, -5);
+        self.register("ZUNION", super::sorted_set::cmd_zunion, -3);
+        self.register("ZINTER", super::sorted_set::cmd_zinter, -3);
+        self.register("ZDIFF", super::sorted_set::cmd_zdiff, -3);
+        self.register("ZINTERCARD", super::sorted_set::cmd_zintercard, -3);
+        self.register("ZMPOP", super::sorted_set::cmd_zmpop, -4);
+
+        // === Blocking sorted set stubs ===
+        self.register("BZPOPMIN", super::sorted_set::cmd_bzpopmin, -3);
+        self.register("BZPOPMAX", super::sorted_set::cmd_bzpopmax, -3);
+        self.register("BZMPOP", super::sorted_set::cmd_bzmpop, -5);
+
+        // === Blocking list stubs ===
+        self.register("BLPOP", super::list::cmd_blpop, -3);
+        self.register("BRPOP", super::list::cmd_brpop, -3);
+        self.register("BLMOVE", super::list::cmd_blmove, 6);
+        self.register("BLMPOP", super::list::cmd_blmpop, -5);
+
+        // === Pub/Sub ===
+        self.register("PUBLISH", super::pubsub::cmd_publish, 3);
+        self.register("SUBSCRIBE", super::pubsub::cmd_subscribe, -2);
+        self.register("UNSUBSCRIBE", super::pubsub::cmd_unsubscribe, -1);
+        self.register("PSUBSCRIBE", super::pubsub::cmd_psubscribe, -2);
+        self.register("PUNSUBSCRIBE", super::pubsub::cmd_punsubscribe, -1);
+        self.register("PUBSUB", super::pubsub::cmd_pubsub, -2);
+
+        // === Transactions ===
+        self.register("MULTI", super::transaction::cmd_multi, 1);
+        self.register("EXEC", super::transaction::cmd_exec, 1);
+        self.register("DISCARD", super::transaction::cmd_discard, 1);
+        self.register("WATCH", super::transaction::cmd_watch, -2);
+        self.register("UNWATCH", super::transaction::cmd_unwatch, 1);
+
+        // === Bitmap commands ===
+        self.register("SETBIT", super::bitmap::cmd_setbit, 4);
+        self.register("GETBIT", super::bitmap::cmd_getbit, 3);
+        self.register("BITCOUNT", super::bitmap::cmd_bitcount, -2);
+        self.register("BITPOS", super::bitmap::cmd_bitpos, -3);
+        self.register("BITOP", super::bitmap::cmd_bitop, -4);
+        self.register("BITFIELD", super::bitmap::cmd_bitfield, -2);
+        self.register("BITFIELD_RO", super::bitmap::cmd_bitfield_ro, -2);
+
+        // === HyperLogLog ===
+        self.register("PFADD", super::hyperloglog::cmd_pfadd, -2);
+        self.register("PFCOUNT", super::hyperloglog::cmd_pfcount, -2);
+        self.register("PFMERGE", super::hyperloglog::cmd_pfmerge, -2);
+
+        // === Geospatial ===
+        self.register("GEOADD", super::geo::cmd_geoadd, -5);
+        self.register("GEOPOS", super::geo::cmd_geopos, -2);
+        self.register("GEODIST", super::geo::cmd_geodist, -4);
+        self.register("GEOSEARCH", super::geo::cmd_geosearch, -7);
+        self.register("GEOSEARCHSTORE", super::geo::cmd_geosearchstore, -7);
+        self.register("GEOHASH", super::geo::cmd_geohash, -2);
+
+        // === Server commands expansion ===
+        self.register("CONFIG", super::server_cmds::cmd_config, -2);
+        self.register("CLIENT", super::server_cmds::cmd_client, -2);
+        self.register("SLOWLOG", super::server_cmds::cmd_slowlog, -2);
+        self.register("MEMORY", super::server_cmds::cmd_memory, -2);
+        self.register("LOLWUT", super::server_cmds::cmd_lolwut, -1);
+        self.register("HELLO", super::server_cmds::cmd_hello, -1);
+        self.register("RESET", super::server_cmds::cmd_reset, 1);
+        self.register("DEBUG", super::server_cmds::cmd_debug, -1);
+        self.register("WAIT", super::server_cmds::cmd_wait, 3);
+
         // === Sort ===
         self.register("SORT", super::keys::cmd_sort, -2);
         self.register("SORT_RO", super::keys::cmd_sort, -2);
+
+        // === Persistence commands ===
+        self.register("SAVE", super::persistence_cmds::cmd_save, 1);
+        self.register("BGSAVE", super::persistence_cmds::cmd_bgsave, 1);
+        self.register("LASTSAVE", super::persistence_cmds::cmd_lastsave, 1);
+        self.register("BGREWRITEAOF", super::persistence_cmds::cmd_bgrewriteaof, 1);
     }
 }

@@ -8,6 +8,12 @@ pub struct Config {
     pub requirepass: Option<String>,
     pub hz: u64,
     pub maxmemory: usize,
+    pub maxmemory_policy: String,
+    pub maxmemory_samples: usize,
+    pub rdb_filename: String,
+    pub aof_enabled: bool,
+    pub aof_filename: String,
+    pub appendfsync: String,
 }
 
 impl Default for Config {
@@ -20,6 +26,12 @@ impl Default for Config {
             requirepass: None,
             hz: 10,
             maxmemory: 0, // 0 = no limit
+            maxmemory_policy: "noeviction".to_string(),
+            maxmemory_samples: 5,
+            rdb_filename: "dump.rdb".to_string(),
+            aof_enabled: false,
+            aof_filename: "appendonly.aof".to_string(),
+            appendfsync: "everysec".to_string(),
         }
     }
 }
@@ -59,6 +71,48 @@ impl Config {
                     i += 1;
                     if i < args.len() {
                         config.requirepass = Some(args[i].clone());
+                    }
+                }
+                "--maxmemory-policy" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.maxmemory_policy = args[i].clone();
+                    }
+                }
+                "--maxmemory-samples" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.maxmemory_samples = args[i].parse().unwrap_or(5);
+                    }
+                }
+                "--dbfilename" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.rdb_filename = args[i].clone();
+                    }
+                }
+                "--appendonly" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.aof_enabled = args[i] == "yes";
+                    }
+                }
+                "--appendfilename" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.aof_filename = args[i].clone();
+                    }
+                }
+                "--appendfsync" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.appendfsync = args[i].clone();
+                    }
+                }
+                "--maxmemory" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.maxmemory = args[i].parse().unwrap_or(0);
                     }
                 }
                 _ => {}

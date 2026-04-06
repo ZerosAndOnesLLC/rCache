@@ -796,3 +796,427 @@ fn format_zset_response(items: Vec<(Bytes, f64)>, withscores: bool) -> RespValue
         RespValue::array(items.into_iter().map(|(m, _)| RespValue::bulk_string(m)).collect())
     }
 }
+
+pub fn cmd_zrangestore(ctx: &mut CommandContext) -> RespValue {
+    let dst = ctx.args[1].clone();
+    let src = ctx.args[2].clone();
+    let min_arg = String::from_utf8_lossy(&ctx.args[3]).to_string();
+    let max_arg = String::from_utf8_lossy(&ctx.args[4]).to_string();
+
+    let mut byscore = false;
+    let mut bylex = false;
+    let mut rev = false;
+    let mut limit_offset: Option<usize> = None;
+    let mut limit_count: Option<usize> = None;
+
+    let mut i = 5;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        match opt.as_str() {
+            "BYSCORE" => byscore = true,
+            "BYLEX" => bylex = true,
+            "REV" => rev = true,
+            "LIMIT" => {
+                i += 1;
+                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                limit_offset = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
+                i += 1;
+                limit_count = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
+            }
+            _ => return RespValue::error("ERR syntax error"),
+        }
+        i += 1;
+    }
+
+    let items = match get_zset(ctx, &src) {
+        Ok(Some(zset)) => {
+            let mut items: Vec<(Bytes, f64)> = if byscore {
+                let (min, min_incl) = match parse_score_bound(&min_arg) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR min or max is not a float"),
+                };
+                let (max, max_incl) = match parse_score_bound(&max_arg) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR min or max is not a float"),
+                };
+                zset.range_by_score_bounded(min, min_incl, max, max_incl)
+            } else if bylex {
+                let all = zset.range_by_index(0, -1);
+                all.into_iter().filter(|(m, _)| lex_in_range(m, &min_arg, &max_arg)).collect()
+            } else {
+                let start: i64 = min_arg.parse().unwrap_or(0);
+                let stop: i64 = max_arg.parse().unwrap_or(-1);
+                zset.range_by_index(start, stop)
+            };
+
+            if rev {
+                items.reverse();
+            }
+
+            if let (Some(offset), Some(count)) = (limit_offset, limit_count) {
+                items = items.into_iter().skip(offset).take(count).collect();
+            }
+
+            items
+        }
+        Ok(None) => vec![],
+        Err(e) => return e,
+    };
+
+    let len = items.len() as i64;
+    let mut result = SortedSetData::new();
+    for (member, score) in items {
+        result.insert(member, score);
+    }
+    if result.is_empty() {
+        ctx.db().remove(&dst);
+    } else {
+        ctx.db().set(dst, RedisObject::SortedSet(result));
+    }
+    RespValue::integer(len)
+}
+
+pub fn cmd_zunion(ctx: &mut CommandContext) -> RespValue {
+    zset_op(ctx, SetOp::Union, false)
+}
+
+pub fn cmd_zinter(ctx: &mut CommandContext) -> RespValue {
+    zset_op(ctx, SetOp::Inter, false)
+}
+
+pub fn cmd_zdiff(ctx: &mut CommandContext) -> RespValue {
+    zset_op(ctx, SetOp::Diff, false)
+}
+
+fn zset_op(ctx: &mut CommandContext, op: SetOp, _store: bool) -> RespValue {
+    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+
+    if ctx.args.len() < 2 + numkeys {
+        return RespValue::wrong_arity("zunion");
+    }
+
+    let keys: Vec<Bytes> = ctx.args[2..2 + numkeys].to_vec();
+
+    let mut weights: Vec<f64> = vec![1.0; numkeys];
+    let mut aggregate = Aggregate::Sum;
+    let mut withscores = false;
+
+    let mut i = 2 + numkeys;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        match opt.as_str() {
+            "WEIGHTS" => {
+                for j in 0..numkeys {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        weights[j] = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
+                    }
+                }
+            }
+            "AGGREGATE" => {
+                i += 1;
+                if i < ctx.args.len() {
+                    let agg = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+                    aggregate = match agg.as_str() {
+                        "MIN" => Aggregate::Min,
+                        "MAX" => Aggregate::Max,
+                        _ => Aggregate::Sum,
+                    };
+                }
+            }
+            "WITHSCORES" => withscores = true,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let mut sets: Vec<SortedSetData> = Vec::new();
+    for key in &keys {
+        sets.push(match collect_zset(ctx, key) {
+            Ok(z) => z,
+            Err(e) => return e,
+        });
+    }
+
+    let mut result = SortedSetData::new();
+
+    match op {
+        SetOp::Union => {
+            for (idx, set) in sets.iter().enumerate() {
+                for (member, &score) in &set.members {
+                    let weighted = score * weights[idx];
+                    let existing = result.score(member);
+                    let new_score = match existing {
+                        Some(e) => aggregate.apply(e, weighted),
+                        None => weighted,
+                    };
+                    result.insert(member.clone(), new_score);
+                }
+            }
+        }
+        SetOp::Inter => {
+            if !sets.is_empty() {
+                let first = &sets[0];
+                for (member, &score) in &first.members {
+                    let mut combined = score * weights[0];
+                    let mut in_all = true;
+                    for (idx, set) in sets.iter().enumerate().skip(1) {
+                        match set.score(member) {
+                            Some(s) => combined = aggregate.apply(combined, s * weights[idx]),
+                            None => { in_all = false; break; }
+                        }
+                    }
+                    if in_all {
+                        result.insert(member.clone(), combined);
+                    }
+                }
+            }
+        }
+        SetOp::Diff => {
+            if let Some(first) = sets.first() {
+                for (member, &score) in &first.members {
+                    let in_others = sets[1..].iter().any(|s| s.score(member).is_some());
+                    if !in_others {
+                        result.insert(member.clone(), score * weights[0]);
+                    }
+                }
+            }
+        }
+    }
+
+    let items: Vec<(Bytes, f64)> = result.range_by_index(0, -1);
+    format_zset_response(items, withscores)
+}
+
+pub fn cmd_zintercard(ctx: &mut CommandContext) -> RespValue {
+    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+
+    if ctx.args.len() < 2 + numkeys {
+        return RespValue::wrong_arity("zintercard");
+    }
+
+    let keys: Vec<Bytes> = ctx.args[2..2 + numkeys].to_vec();
+
+    let mut limit = 0usize;
+    let mut i = 2 + numkeys;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        if opt == "LIMIT" {
+            i += 1;
+            if i < ctx.args.len() {
+                limit = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0);
+            }
+        }
+        i += 1;
+    }
+
+    let mut sets: Vec<SortedSetData> = Vec::new();
+    for key in &keys {
+        sets.push(match collect_zset(ctx, key) {
+            Ok(z) => z,
+            Err(e) => return e,
+        });
+    }
+
+    if sets.is_empty() {
+        return RespValue::integer(0);
+    }
+
+    let first = &sets[0];
+    let mut count = 0usize;
+    for (member, _) in &first.members {
+        let in_all = sets[1..].iter().all(|s| s.score(member).is_some());
+        if in_all {
+            count += 1;
+            if limit > 0 && count >= limit {
+                break;
+            }
+        }
+    }
+
+    RespValue::integer(count as i64)
+}
+
+pub fn cmd_zmpop(ctx: &mut CommandContext) -> RespValue {
+    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+
+    if ctx.args.len() < 2 + numkeys + 1 {
+        return RespValue::wrong_arity("zmpop");
+    }
+
+    let keys: Vec<Bytes> = ctx.args[2..2 + numkeys].to_vec();
+    let direction = String::from_utf8_lossy(&ctx.args[2 + numkeys]).to_uppercase();
+
+    let mut count = 1usize;
+    let mut i = 3 + numkeys;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        if opt == "COUNT" {
+            i += 1;
+            if i < ctx.args.len() {
+                count = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1);
+            }
+        }
+        i += 1;
+    }
+
+    for key in &keys {
+        match get_zset_mut(ctx, key) {
+            Ok(Some(zset)) => {
+                if zset.is_empty() {
+                    continue;
+                }
+                let mut results = Vec::new();
+                for _ in 0..count {
+                    let item = match direction.as_str() {
+                        "MIN" => zset.pop_min(),
+                        "MAX" => zset.pop_max(),
+                        _ => return RespValue::error("ERR syntax error"),
+                    };
+                    match item {
+                        Some((member, score)) => {
+                            results.push(RespValue::bulk_string(member));
+                            results.push(RespValue::bulk_string(Bytes::from(format!("{}", score))));
+                        }
+                        None => break,
+                    }
+                }
+                cleanup_empty_zset(ctx, key);
+                return RespValue::array(vec![
+                    RespValue::bulk_string(key.clone()),
+                    RespValue::array(results),
+                ]);
+            }
+            Ok(None) => continue,
+            Err(e) => return e,
+        }
+    }
+
+    RespValue::NullArray
+}
+
+// === Blocking sorted set stubs (non-blocking immediate check) ===
+
+pub fn cmd_bzpopmin(ctx: &mut CommandContext) -> RespValue {
+    // Non-blocking stub: check keys immediately, ignore timeout
+    let keys: Vec<Bytes> = ctx.args[1..ctx.args.len() - 1].to_vec();
+
+    for key in &keys {
+        match get_zset_mut(ctx, key) {
+            Ok(Some(zset)) => {
+                if let Some((member, score)) = zset.pop_min() {
+                    cleanup_empty_zset(ctx, key);
+                    return RespValue::array(vec![
+                        RespValue::bulk_string(key.clone()),
+                        RespValue::bulk_string(member),
+                        RespValue::bulk_string(Bytes::from(format!("{}", score))),
+                    ]);
+                }
+            }
+            Ok(None) => continue,
+            Err(e) => return e,
+        }
+    }
+
+    RespValue::NullArray
+}
+
+pub fn cmd_bzpopmax(ctx: &mut CommandContext) -> RespValue {
+    // Non-blocking stub: check keys immediately, ignore timeout
+    let keys: Vec<Bytes> = ctx.args[1..ctx.args.len() - 1].to_vec();
+
+    for key in &keys {
+        match get_zset_mut(ctx, key) {
+            Ok(Some(zset)) => {
+                if let Some((member, score)) = zset.pop_max() {
+                    cleanup_empty_zset(ctx, key);
+                    return RespValue::array(vec![
+                        RespValue::bulk_string(key.clone()),
+                        RespValue::bulk_string(member),
+                        RespValue::bulk_string(Bytes::from(format!("{}", score))),
+                    ]);
+                }
+            }
+            Ok(None) => continue,
+            Err(e) => return e,
+        }
+    }
+
+    RespValue::NullArray
+}
+
+pub fn cmd_bzmpop(ctx: &mut CommandContext) -> RespValue {
+    // Non-blocking stub: ignore timeout (first arg), then delegate to zmpop logic
+    // BZMPOP timeout numkeys key [key ...] MIN|MAX [COUNT count]
+    if ctx.args.len() < 4 {
+        return RespValue::wrong_arity("bzmpop");
+    }
+
+    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+
+    if ctx.args.len() < 3 + numkeys + 1 {
+        return RespValue::wrong_arity("bzmpop");
+    }
+
+    let keys: Vec<Bytes> = ctx.args[3..3 + numkeys].to_vec();
+    let direction = String::from_utf8_lossy(&ctx.args[3 + numkeys]).to_uppercase();
+
+    let mut count = 1usize;
+    let mut i = 4 + numkeys;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        if opt == "COUNT" {
+            i += 1;
+            if i < ctx.args.len() {
+                count = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1);
+            }
+        }
+        i += 1;
+    }
+
+    for key in &keys {
+        match get_zset_mut(ctx, key) {
+            Ok(Some(zset)) => {
+                if zset.is_empty() {
+                    continue;
+                }
+                let mut results = Vec::new();
+                for _ in 0..count {
+                    let item = match direction.as_str() {
+                        "MIN" => zset.pop_min(),
+                        "MAX" => zset.pop_max(),
+                        _ => return RespValue::error("ERR syntax error"),
+                    };
+                    match item {
+                        Some((member, score)) => {
+                            results.push(RespValue::bulk_string(member));
+                            results.push(RespValue::bulk_string(Bytes::from(format!("{}", score))));
+                        }
+                        None => break,
+                    }
+                }
+                cleanup_empty_zset(ctx, key);
+                return RespValue::array(vec![
+                    RespValue::bulk_string(key.clone()),
+                    RespValue::array(results),
+                ]);
+            }
+            Ok(None) => continue,
+            Err(e) => return e,
+        }
+    }
+
+    RespValue::NullArray
+}

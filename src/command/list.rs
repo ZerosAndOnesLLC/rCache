@@ -573,3 +573,150 @@ pub fn cmd_lmpop(ctx: &mut CommandContext) -> RespValue {
 
     RespValue::NullArray
 }
+
+// === Blocking list stubs (non-blocking immediate check) ===
+
+pub fn cmd_blpop(ctx: &mut CommandContext) -> RespValue {
+    // Non-blocking stub: check keys immediately, ignore timeout
+    let keys: Vec<Bytes> = ctx.args[1..ctx.args.len() - 1].to_vec();
+
+    for key in &keys {
+        let db = ctx.db();
+        if let Some(RedisObject::List(list)) = db.get_mut(key) {
+            if let Some(val) = list.pop_front() {
+                let key_clone = key.clone();
+                cleanup_empty_list(ctx, &key_clone);
+                return RespValue::array(vec![
+                    RespValue::bulk_string(key_clone),
+                    RespValue::bulk_string(val),
+                ]);
+            }
+        }
+    }
+
+    RespValue::NullArray
+}
+
+pub fn cmd_brpop(ctx: &mut CommandContext) -> RespValue {
+    // Non-blocking stub: check keys immediately, ignore timeout
+    let keys: Vec<Bytes> = ctx.args[1..ctx.args.len() - 1].to_vec();
+
+    for key in &keys {
+        let db = ctx.db();
+        if let Some(RedisObject::List(list)) = db.get_mut(key) {
+            if let Some(val) = list.pop_back() {
+                let key_clone = key.clone();
+                cleanup_empty_list(ctx, &key_clone);
+                return RespValue::array(vec![
+                    RespValue::bulk_string(key_clone),
+                    RespValue::bulk_string(val),
+                ]);
+            }
+        }
+    }
+
+    RespValue::NullArray
+}
+
+pub fn cmd_blmove(ctx: &mut CommandContext) -> RespValue {
+    // Non-blocking stub: BLMOVE src dst LEFT|RIGHT LEFT|RIGHT timeout
+    // Ignore timeout, try immediately
+    let src = ctx.args[1].clone();
+    let dst = ctx.args[2].clone();
+    let wherefrom = String::from_utf8_lossy(&ctx.args[3]).to_uppercase();
+    let whereto = String::from_utf8_lossy(&ctx.args[4]).to_uppercase();
+
+    let db = ctx.db();
+    let value = match db.get_mut(&src) {
+        Some(RedisObject::List(list)) => {
+            match wherefrom.as_str() {
+                "LEFT" => list.pop_front(),
+                "RIGHT" => list.pop_back(),
+                _ => return RespValue::error("ERR syntax error"),
+            }
+        }
+        Some(_) => return RespValue::wrong_type(),
+        None => return RespValue::Null,
+    };
+
+    let value = match value {
+        Some(v) => v,
+        None => return RespValue::Null,
+    };
+
+    cleanup_empty_list(ctx, &src);
+
+    let list = match ensure_list(ctx, &dst) {
+        Ok(l) => l,
+        Err(e) => return e,
+    };
+
+    match whereto.as_str() {
+        "LEFT" => list.push_front(value.clone()),
+        "RIGHT" => list.push_back(value.clone()),
+        _ => return RespValue::error("ERR syntax error"),
+    }
+
+    RespValue::bulk_string(value)
+}
+
+pub fn cmd_blmpop(ctx: &mut CommandContext) -> RespValue {
+    // Non-blocking stub: BLMPOP timeout numkeys key [key ...] LEFT|RIGHT [COUNT count]
+    // Skip timeout (first arg after command name), then delegate to lmpop logic
+    if ctx.args.len() < 4 {
+        return RespValue::wrong_arity("blmpop");
+    }
+
+    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    };
+
+    if ctx.args.len() < 3 + numkeys + 1 {
+        return RespValue::wrong_arity("blmpop");
+    }
+
+    let keys: Vec<Bytes> = ctx.args[3..3 + numkeys].to_vec();
+    let direction = String::from_utf8_lossy(&ctx.args[3 + numkeys]).to_uppercase();
+
+    let mut count = 1usize;
+    let mut i = 4 + numkeys;
+    while i < ctx.args.len() {
+        let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
+        if opt == "COUNT" {
+            i += 1;
+            if i < ctx.args.len() {
+                count = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1);
+            }
+        }
+        i += 1;
+    }
+
+    for key in &keys {
+        let db = ctx.db();
+        if let Some(RedisObject::List(list)) = db.get_mut(key) {
+            if list.is_empty() {
+                continue;
+            }
+            let mut results = Vec::new();
+            for _ in 0..count {
+                let val = match direction.as_str() {
+                    "LEFT" => list.pop_front(),
+                    "RIGHT" => list.pop_back(),
+                    _ => return RespValue::error("ERR syntax error"),
+                };
+                match val {
+                    Some(v) => results.push(RespValue::bulk_string(v)),
+                    None => break,
+                }
+            }
+            cleanup_empty_list(ctx, key);
+            return RespValue::array(vec![
+                RespValue::bulk_string(key.clone()),
+                RespValue::array(results),
+            ]);
+        }
+    }
+
+    RespValue::NullArray
+}

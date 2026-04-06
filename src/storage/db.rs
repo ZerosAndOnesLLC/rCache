@@ -8,8 +8,10 @@ pub struct Database {
     data: HashMap<Bytes, RedisObject>,
     expires: HashMap<Bytes, Instant>,
     /// Monotonically increasing counter for LRU tracking (access order).
-    lru_clock: u64,
-    lru_map: HashMap<Bytes, u64>,
+    pub(crate) lru_clock: u64,
+    pub(crate) lru_map: HashMap<Bytes, u64>,
+    /// Approximate memory usage in bytes.
+    pub(crate) used_memory: usize,
 }
 
 impl Database {
@@ -19,6 +21,7 @@ impl Database {
             expires: HashMap::new(),
             lru_clock: 0,
             lru_map: HashMap::new(),
+            used_memory: 0,
         }
     }
 
@@ -46,12 +49,26 @@ impl Database {
     pub fn set(&mut self, key: Bytes, value: RedisObject) {
         self.expires.remove(&key);
         self.touch_lru(&key);
+        // Update memory tracking
+        let new_size = key.len() + value.estimate_memory() + 64;
+        if let Some(old) = self.data.get(&key) {
+            let old_size = key.len() + old.estimate_memory() + 64;
+            self.used_memory = self.used_memory.saturating_sub(old_size);
+        }
+        self.used_memory += new_size;
         self.data.insert(key, value);
     }
 
     /// Set a value, keeping the existing expiration if any.
     pub fn set_keep_ttl(&mut self, key: Bytes, value: RedisObject) {
         self.touch_lru(&key);
+        // Update memory tracking
+        let new_size = key.len() + value.estimate_memory() + 64;
+        if let Some(old) = self.data.get(&key) {
+            let old_size = key.len() + old.estimate_memory() + 64;
+            self.used_memory = self.used_memory.saturating_sub(old_size);
+        }
+        self.used_memory += new_size;
         self.data.insert(key, value);
     }
 
@@ -68,7 +85,13 @@ impl Database {
     pub fn remove(&mut self, key: &Bytes) -> Option<RedisObject> {
         self.expires.remove(key);
         self.lru_map.remove(key);
-        self.data.remove(key)
+        if let Some(obj) = self.data.remove(key) {
+            let size = key.len() + obj.estimate_memory() + 64;
+            self.used_memory = self.used_memory.saturating_sub(size);
+            Some(obj)
+        } else {
+            None
+        }
     }
 
     /// Set expiration on a key.
@@ -141,6 +164,7 @@ impl Database {
         self.data.clear();
         self.expires.clear();
         self.lru_map.clear();
+        self.used_memory = 0;
     }
 
     /// Active expiration: sample random keys with TTL and delete expired ones.
@@ -158,7 +182,10 @@ impl Database {
             .collect();
 
         for key in expired_keys {
-            self.data.remove(&key);
+            if let Some(obj) = self.data.remove(&key) {
+                let size = key.len() + obj.estimate_memory() + 64;
+                self.used_memory = self.used_memory.saturating_sub(size);
+            }
             self.expires.remove(&key);
             self.lru_map.remove(&key);
             deleted += 1;
@@ -301,6 +328,60 @@ impl Database {
     fn touch_lru(&mut self, key: &Bytes) {
         self.lru_clock += 1;
         self.lru_map.insert(key.clone(), self.lru_clock);
+    }
+
+    /// Iterate over all key-value pairs (for persistence).
+    pub fn iter(&self) -> impl Iterator<Item = (&Bytes, &RedisObject)> {
+        self.data.iter()
+    }
+
+    /// Get the expiry map (for persistence).
+    pub fn expires_iter(&self) -> impl Iterator<Item = (&Bytes, &Instant)> {
+        self.expires.iter()
+    }
+
+    /// Insert a key-value pair directly (used by persistence loading).
+    /// Does not update LRU.
+    pub fn set_raw(&mut self, key: Bytes, value: RedisObject) {
+        let new_size = key.len() + value.estimate_memory() + 64;
+        if let Some(old) = self.data.get(&key) {
+            let old_size = key.len() + old.estimate_memory() + 64;
+            self.used_memory = self.used_memory.saturating_sub(old_size);
+        }
+        self.used_memory += new_size;
+        self.data.insert(key, value);
+    }
+
+    /// Set expiration directly (used by persistence loading).
+    pub fn set_expire_raw(&mut self, key: Bytes, when: Instant) {
+        self.expires.insert(key, when);
+    }
+
+    /// Get all keys (for eviction sampling).
+    pub fn all_keys(&self) -> Vec<Bytes> {
+        self.data.keys().cloned().collect()
+    }
+
+    /// Get all keys that have an expiry set (for volatile eviction).
+    pub fn volatile_keys(&self) -> Vec<Bytes> {
+        self.expires.keys().cloned().collect()
+    }
+
+    /// Get the LRU clock value for a key.
+    pub fn lru_of(&self, key: &Bytes) -> Option<u64> {
+        self.lru_map.get(key).copied()
+    }
+
+    /// Get the time-to-live remaining for a key, if it has an expiry.
+    pub fn time_to_live(&self, key: &Bytes) -> Option<std::time::Duration> {
+        self.expires.get(key).and_then(|exp| {
+            let now = Instant::now();
+            if *exp > now {
+                Some(*exp - now)
+            } else {
+                None
+            }
+        })
     }
 }
 
