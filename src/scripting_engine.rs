@@ -279,25 +279,17 @@ pub fn execute_script(
     // we use a RefCell to allow interior mutability.
     // However, with mlua scoped callbacks, we can reference the store.
 
-    // For simplicity, create the redis table with call/pcall that execute
-    // commands against the store.
-    let _redis_call_results: std::cell::RefCell<Vec<(Vec<String>, bool)>> = std::cell::RefCell::new(Vec::new());
+    // Share the store with Lua callbacks via a stack-local RefCell. mlua's
+    // scoped callbacks let non-'static borrows live as long as the scope, so
+    // no raw pointer is needed and the borrow checker enforces aliasing.
+    let store_cell = std::cell::RefCell::new(store);
+    let db_idx = db_index;
 
-    // We'll use a two-pass approach:
-    // 1. Set up redis.call as a function that records calls
-    // 2. Actually, let's just execute inline since we have the store
+    let result: Result<RespValue, String> = lua
+        .scope(|scope| {
+            let redis_table = lua.create_table()?;
 
-    // Create a simpler approach: use a Lua function that accesses the store
-    // through a raw pointer (safe within the scope of this function call).
-    let store_ptr = store as *mut Store;
-
-    let result: Result<RespValue, String> = (|| {
-        // Create the redis table with call/pcall
-        let redis_table = lua.create_table().map_err(|e| e.to_string())?;
-
-        let db_idx = db_index;
-        let call_fn = lua
-            .create_function(move |lua_ctx, args: mlua::MultiValue| {
+            let call_fn = scope.create_function(|lua_ctx, args: mlua::MultiValue| {
                 let str_args: Vec<String> = args
                     .into_iter()
                     .map(|v| match v {
@@ -320,16 +312,12 @@ pub fn execute_script(
                     ));
                 }
 
-                // Execute the command against the store
-                // Safety: store_ptr is valid for the duration of this function call
-                let store_ref = unsafe { &mut *store_ptr };
-                let resp = execute_redis_command(store_ref, db_idx, &str_args);
+                let mut store_ref = store_cell.borrow_mut();
+                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args);
                 resp_to_lua(lua_ctx, &resp)
-            })
-            .map_err(|e| e.to_string())?;
+            })?;
 
-        let pcall_fn = lua
-            .create_function(move |lua_ctx, args: mlua::MultiValue| {
+            let pcall_fn = scope.create_function(|lua_ctx, args: mlua::MultiValue| {
                 let str_args: Vec<String> = args
                     .into_iter()
                     .map(|v| match v {
@@ -355,8 +343,8 @@ pub fn execute_script(
                     return Ok(mlua::Value::Table(err_table));
                 }
 
-                let store_ref = unsafe { &mut *store_ptr };
-                let resp = execute_redis_command(store_ref, db_idx, &str_args);
+                let mut store_ref = store_cell.borrow_mut();
+                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args);
                 match &resp {
                     RespValue::Error(e) => {
                         let err_table = lua_ctx.create_table()?;
@@ -365,63 +353,48 @@ pub fn execute_script(
                     }
                     _ => resp_to_lua(lua_ctx, &resp),
                 }
-            })
-            .map_err(|e| e.to_string())?;
+            })?;
 
-        redis_table.set("call", call_fn).map_err(|e| e.to_string())?;
-        redis_table.set("pcall", pcall_fn).map_err(|e| e.to_string())?;
+            redis_table.set("call", call_fn)?;
+            redis_table.set("pcall", pcall_fn)?;
 
-        // Add redis.status_reply and redis.error_reply helpers
-        let status_fn = lua
-            .create_function(|lua_ctx, msg: String| {
+            let status_fn = lua.create_function(|lua_ctx, msg: String| {
                 let t = lua_ctx.create_table()?;
                 t.set("ok", msg)?;
                 Ok(mlua::Value::Table(t))
-            })
-            .map_err(|e| e.to_string())?;
-        redis_table.set("status_reply", status_fn).map_err(|e| e.to_string())?;
+            })?;
+            redis_table.set("status_reply", status_fn)?;
 
-        let error_fn = lua
-            .create_function(|lua_ctx, msg: String| {
+            let error_fn = lua.create_function(|lua_ctx, msg: String| {
                 let t = lua_ctx.create_table()?;
                 t.set("err", msg)?;
                 Ok(mlua::Value::Table(t))
-            })
-            .map_err(|e| e.to_string())?;
-        redis_table.set("error_reply", error_fn).map_err(|e| e.to_string())?;
+            })?;
+            redis_table.set("error_reply", error_fn)?;
 
-        let log_fn = lua
-            .create_function(|_lua_ctx, (_level, msg): (i32, String)| {
+            let log_fn = lua.create_function(|_lua_ctx, (_level, msg): (i32, String)| {
                 tracing::info!("Lua script log: {}", msg);
                 Ok(())
-            })
-            .map_err(|e| e.to_string())?;
-        redis_table.set("log", log_fn).map_err(|e| e.to_string())?;
+            })?;
+            redis_table.set("log", log_fn)?;
 
-        // redis.LOG_DEBUG, redis.LOG_VERBOSE, redis.LOG_NOTICE, redis.LOG_WARNING
-        redis_table.set("LOG_DEBUG", 0).map_err(|e| e.to_string())?;
-        redis_table.set("LOG_VERBOSE", 1).map_err(|e| e.to_string())?;
-        redis_table.set("LOG_NOTICE", 2).map_err(|e| e.to_string())?;
-        redis_table.set("LOG_WARNING", 3).map_err(|e| e.to_string())?;
+            redis_table.set("LOG_DEBUG", 0)?;
+            redis_table.set("LOG_VERBOSE", 1)?;
+            redis_table.set("LOG_NOTICE", 2)?;
+            redis_table.set("LOG_WARNING", 3)?;
 
-        // For Functions API: add register_function
-        let register_fn = lua
-            .create_function(|_lua_ctx, _args: mlua::MultiValue| {
+            let register_fn = lua.create_function(|_lua_ctx, _args: mlua::MultiValue| {
                 // No-op in script execution context; only meaningful during FUNCTION LOAD
                 Ok(())
-            })
-            .map_err(|e| e.to_string())?;
-        redis_table.set("register_function", register_fn).map_err(|e| e.to_string())?;
+            })?;
+            redis_table.set("register_function", register_fn)?;
 
-        lua.globals().set("redis", redis_table).map_err(|e| e.to_string())?;
+            lua.globals().set("redis", redis_table)?;
 
-        // Execute the script
-        let result: mlua::Result<mlua::Value> = lua.load(script).eval();
-        match result {
-            Ok(val) => Ok(lua_to_resp(&val)),
-            Err(e) => Err(format!("ERR {}", e)),
-        }
-    })();
+            let val: mlua::Value = lua.load(script).eval()?;
+            Ok(lua_to_resp(&val))
+        })
+        .map_err(|e: mlua::Error| format!("ERR {}", e));
 
     match result {
         Ok(resp) => resp,
