@@ -64,10 +64,13 @@ impl PubSubManager {
         }
     }
 
-    pub fn publish(&self, channel: &Bytes, message: &Bytes) -> i64 {
+    /// Publish to channel + matching patterns. Returns the number of clients
+    /// that received the message. Also opportunistically prunes subscribers
+    /// whose receiver has been dropped (abrupt disconnect path).
+    pub fn publish(&mut self, channel: &Bytes, message: &Bytes) -> i64 {
         let mut count = 0i64;
+        let mut dead: Vec<u64> = Vec::new();
 
-        // Exact channel subscribers
         if let Some(subs) = self.channels.get(channel) {
             for client_id in subs {
                 if let Some(sender) = self.subscribers.get(client_id) {
@@ -78,12 +81,13 @@ impl PubSubManager {
                     ]);
                     if sender.send(msg).is_ok() {
                         count += 1;
+                    } else {
+                        dead.push(*client_id);
                     }
                 }
             }
         }
 
-        // Pattern subscribers
         let channel_str = String::from_utf8_lossy(channel);
         for (pattern, subs) in &self.patterns {
             let pattern_str = String::from_utf8_lossy(pattern);
@@ -98,10 +102,16 @@ impl PubSubManager {
                         ]);
                         if sender.send(msg).is_ok() {
                             count += 1;
+                        } else {
+                            dead.push(*client_id);
                         }
                     }
                 }
             }
+        }
+
+        for client_id in dead {
+            self.remove_client(client_id);
         }
 
         count
