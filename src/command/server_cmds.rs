@@ -15,9 +15,9 @@ pub fn cmd_echo(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_select(ctx: &mut CommandContext) -> RespValue {
-    let index: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let index = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     if index >= ctx.store.db_count() {
         return RespValue::error("ERR DB index is out of range");
@@ -41,13 +41,13 @@ pub fn cmd_flushall(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_swapdb(ctx: &mut CommandContext) -> RespValue {
-    let a: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let a = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let b: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let b = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     if a >= ctx.store.db_count() || b >= ctx.store.db_count() {
         return RespValue::error("ERR invalid DB index");

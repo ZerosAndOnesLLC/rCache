@@ -22,9 +22,9 @@ fn check_type(ctx: &mut CommandContext, key: &Bytes) -> Result<(), RespValue> {
 
 pub fn cmd_setbit(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let offset: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR bit offset is not an integer or out of range"),
+    let offset = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR bit offset is not an integer or out of range"),
     };
     let value: u8 = match String::from_utf8_lossy(&ctx.args[3]).parse::<u8>() {
         Ok(v) if v <= 1 => v,
@@ -59,9 +59,9 @@ pub fn cmd_setbit(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_getbit(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let offset: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR bit offset is not an integer or out of range"),
+    let offset = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR bit offset is not an integer or out of range"),
     };
 
     if let Err(e) = check_type(ctx, &key) {
@@ -100,13 +100,13 @@ pub fn cmd_bitcount(ctx: &mut CommandContext) -> RespValue {
         return RespValue::integer(count as i64);
     }
 
-    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let start = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let end: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let end = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let use_bit = ctx.args.len() > 4 &&
@@ -171,14 +171,14 @@ pub fn cmd_bitpos(ctx: &mut CommandContext) -> RespValue {
     let has_end = ctx.args.len() > 4;
 
     let (start_byte, end_byte) = if ctx.args.len() > 3 {
-        let start: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-            Ok(v) => v,
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        let start = match super::parse::int(&ctx.args[3]) {
+            Some(v) => v,
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         };
         let end: i64 = if ctx.args.len() > 4 {
-            match String::from_utf8_lossy(&ctx.args[4]).parse() {
-                Ok(v) => v,
-                Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+            match super::parse::int(&ctx.args[4]) {
+                Some(v) => v,
+                None => return RespValue::error("ERR value is not an integer or out of range"),
             }
         } else {
             -1
@@ -344,9 +344,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                     Some(v) => v,
                     None => return RespValue::error("ERR bit offset is not an integer or out of range"),
                 };
-                let value: i64 = match String::from_utf8_lossy(&ctx.args[i + 3]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                let value = match super::parse::int(&ctx.args[i + 3]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
                 i += 4;
 
@@ -369,9 +369,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                     Some(v) => v,
                     None => return RespValue::error("ERR bit offset is not an integer or out of range"),
                 };
-                let increment: i64 = match String::from_utf8_lossy(&ctx.args[i + 3]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                let increment = match super::parse::int(&ctx.args[i + 3]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
                 i += 4;
 

@@ -10,9 +10,9 @@ pub fn cmd_eval(ctx: &mut CommandContext) -> RespValue {
     }
 
     let script = String::from_utf8_lossy(&ctx.args[1]).to_string();
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(n) => n,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[2]) {
+        Some(n) => n,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 3 + numkeys {
@@ -32,9 +32,9 @@ pub fn cmd_evalsha(ctx: &mut CommandContext) -> RespValue {
     }
 
     let sha = String::from_utf8_lossy(&ctx.args[1]).to_lowercase();
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(n) => n,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[2]) {
+        Some(n) => n,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 3 + numkeys {
@@ -262,9 +262,9 @@ pub fn cmd_fcall(ctx: &mut CommandContext) -> RespValue {
     }
 
     let fname = String::from_utf8_lossy(&ctx.args[1]).to_string();
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(n) => n,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[2]) {
+        Some(n) => n,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 3 + numkeys {

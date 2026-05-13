@@ -6,9 +6,9 @@ use crate::storage::db::glob_match;
 use super::registry::CommandContext;
 
 pub fn cmd_scan(ctx: &mut CommandContext) -> RespValue {
-    let cursor: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let cursor = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let mut pattern: Option<String> = None;
@@ -57,9 +57,9 @@ pub fn cmd_scan(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_sscan(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let cursor: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let cursor = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let mut pattern: Option<String> = None;
@@ -106,9 +106,9 @@ pub fn cmd_sscan(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_hscan(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let cursor: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let cursor = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let mut pattern: Option<String> = None;
@@ -163,9 +163,9 @@ pub fn cmd_hscan(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_zscan(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let cursor: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let cursor = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let mut pattern: Option<String> = None;

@@ -138,13 +138,13 @@ pub fn cmd_geoadd(ctx: &mut CommandContext) -> RespValue {
 
     let mut triples = Vec::new();
     while i + 2 < ctx.args.len() {
-        let lon: f64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-            Ok(v) => v,
-            Err(_) => return RespValue::error("ERR value is not a valid float"),
+        let lon = match super::parse::float(&ctx.args[i]) {
+            Some(v) => v,
+            None => return RespValue::error("ERR value is not a valid float"),
         };
-        let lat: f64 = match String::from_utf8_lossy(&ctx.args[i + 1]).parse() {
-            Ok(v) => v,
-            Err(_) => return RespValue::error("ERR value is not a valid float"),
+        let lat = match super::parse::float(&ctx.args[i + 1]) {
+            Some(v) => v,
+            None => return RespValue::error("ERR value is not a valid float"),
         };
 
         if lon < -180.0 || lon > 180.0 || lat < -85.05112878 || lat > 85.05112878 {
@@ -274,22 +274,22 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
             "FROMLONLAT" => {
                 i += 1;
                 if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                from_lon = Some(match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                from_lon = Some(match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 });
                 i += 1;
-                from_lat = Some(match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                from_lat = Some(match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 });
             }
             "BYRADIUS" => {
                 i += 1;
                 if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                let radius: f64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                let radius = match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 };
                 i += 1;
                 let unit = String::from_utf8_lossy(&ctx.args[i]).to_lowercase();
@@ -298,14 +298,14 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
             "BYBOX" => {
                 i += 1;
                 if i + 2 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                let width: f64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                let width = match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 };
                 i += 1;
-                let height: f64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                let height = match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 };
                 i += 1;
                 let unit = String::from_utf8_lossy(&ctx.args[i]).to_lowercase();
@@ -316,9 +316,9 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
             "COUNT" => {
                 i += 1;
                 if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                count = Some(match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                count = Some(match super::parse::usize_(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
                 // Check for ANY
                 if i + 1 < ctx.args.len() && String::from_utf8_lossy(&ctx.args[i + 1]).to_uppercase() == "ANY" {
@@ -459,22 +459,22 @@ pub fn cmd_geosearchstore(ctx: &mut CommandContext) -> RespValue {
             "FROMLONLAT" => {
                 i += 1;
                 if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                from_lon = Some(match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                from_lon = Some(match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 });
                 i += 1;
-                from_lat = Some(match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                from_lat = Some(match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 });
             }
             "BYRADIUS" => {
                 i += 1;
                 if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                let radius: f64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                let radius = match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 };
                 i += 1;
                 let unit = String::from_utf8_lossy(&ctx.args[i]).to_lowercase();
@@ -483,14 +483,14 @@ pub fn cmd_geosearchstore(ctx: &mut CommandContext) -> RespValue {
             "BYBOX" => {
                 i += 1;
                 if i + 2 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                let width: f64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                let width = match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 };
                 i += 1;
-                let height: f64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not a valid float"),
+                let height = match super::parse::float(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not a valid float"),
                 };
                 i += 1;
                 let unit = String::from_utf8_lossy(&ctx.args[i]).to_lowercase();
@@ -501,9 +501,9 @@ pub fn cmd_geosearchstore(ctx: &mut CommandContext) -> RespValue {
             "COUNT" => {
                 i += 1;
                 if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                count = Some(match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                count = Some(match super::parse::usize_(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
                 if i + 1 < ctx.args.len() && String::from_utf8_lossy(&ctx.args[i + 1]).to_uppercase() == "ANY" {
                     i += 1;

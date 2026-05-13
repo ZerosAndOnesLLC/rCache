@@ -1,4 +1,5 @@
 mod registry;
+mod parse;
 mod strings;
 mod keys;
 pub(crate) mod server_cmds;

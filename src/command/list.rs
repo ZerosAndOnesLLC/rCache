@@ -78,9 +78,9 @@ pub fn cmd_rpushx(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_lpop(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count = if ctx.args.len() > 2 {
-        match String::from_utf8_lossy(&ctx.args[2]).parse::<usize>() {
-            Ok(v) => Some(v),
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::usize_(&ctx.args[2]) {
+            Some(v) => Some(v),
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         None
@@ -127,9 +127,9 @@ pub fn cmd_lpop(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_rpop(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count = if ctx.args.len() > 2 {
-        match String::from_utf8_lossy(&ctx.args[2]).parse::<usize>() {
-            Ok(v) => Some(v),
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::usize_(&ctx.args[2]) {
+            Some(v) => Some(v),
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         None
@@ -194,9 +194,9 @@ pub fn cmd_llen(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_lindex(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let index: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let index = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let db = ctx.db();
@@ -217,13 +217,13 @@ pub fn cmd_lindex(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_lrange(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let start = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let stop: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let stop = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let db = ctx.db();
@@ -249,9 +249,9 @@ pub fn cmd_lrange(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_lset(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let index: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let index = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     let value = ctx.args[3].clone();
 
@@ -303,9 +303,9 @@ pub fn cmd_linsert(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_lrem(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let count: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let count = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     let value = ctx.args[3].clone();
 
@@ -346,13 +346,13 @@ pub fn cmd_lrem(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_ltrim(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let start = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let stop: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let stop = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     match get_list(ctx, &key) {
@@ -390,26 +390,26 @@ pub fn cmd_lpos(ctx: &mut CommandContext) -> RespValue {
             "RANK" => {
                 i += 1;
                 if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                rank = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                rank = match super::parse::int(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
                 if rank == 0 { return RespValue::error("ERR RANK can't be zero"); }
             }
             "COUNT" => {
                 i += 1;
                 if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                count = Some(match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                count = Some(match super::parse::usize_(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
             }
             "MAXLEN" => {
                 i += 1;
                 if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
-                maxlen = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                maxlen = match super::parse::usize_(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
             }
             _ => return RespValue::error("ERR syntax error"),
@@ -515,9 +515,9 @@ pub fn cmd_lmove(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_lmpop(ctx: &mut CommandContext) -> RespValue {
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 2 + numkeys + 1 {
@@ -662,9 +662,9 @@ pub fn cmd_blmpop(ctx: &mut CommandContext) -> RespValue {
         return RespValue::wrong_arity("blmpop");
     }
 
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 3 + numkeys + 1 {

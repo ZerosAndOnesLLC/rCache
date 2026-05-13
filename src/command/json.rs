@@ -562,9 +562,9 @@ pub fn cmd_json_arrpop(ctx: &mut CommandContext) -> RespValue {
         "$".to_string()
     };
     let index: Option<i64> = if ctx.args.len() >= 4 {
-        match String::from_utf8_lossy(&ctx.args[3]).parse() {
-            Ok(v) => Some(v),
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::int(&ctx.args[3]) {
+            Some(v) => Some(v),
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         None // default: pop last element

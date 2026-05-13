@@ -103,8 +103,8 @@ fn cmd_cluster_countkeysinslot(ctx: &mut CommandContext) -> RespValue {
             "ERR wrong number of arguments for 'cluster|countkeysinslot' command",
         );
     }
-    let _slot: u16 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) if v < 16384 => v,
+    let _slot = match super::parse::u64_(&ctx.args[2]) {
+        Some(v) if v < 16384 => v,
         _ => return RespValue::error("ERR Invalid or out of range slot"),
     };
     // In standalone mode, we don't track slots; return 0
@@ -117,13 +117,13 @@ fn cmd_cluster_getkeysinslot(ctx: &mut CommandContext) -> RespValue {
             "ERR wrong number of arguments for 'cluster|getkeysinslot' command",
         );
     }
-    let _slot: u16 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) if v < 16384 => v,
+    let _slot = match super::parse::u64_(&ctx.args[2]) {
+        Some(v) if v < 16384 => v,
         _ => return RespValue::error("ERR Invalid or out of range slot"),
     };
-    let _count: u64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let _count = match super::parse::u64_(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     RespValue::array(vec![])
 }

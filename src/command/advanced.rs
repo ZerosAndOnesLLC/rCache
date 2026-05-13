@@ -146,9 +146,9 @@ pub fn cmd_lcs(ctx: &mut CommandContext) -> RespValue {
                 if i >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                min_match_len = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                min_match_len = match super::parse::usize_(&ctx.args[i]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
             }
             "WITHMATCHLEN" => with_match_len = true,

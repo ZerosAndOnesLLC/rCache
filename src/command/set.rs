@@ -122,9 +122,9 @@ pub fn cmd_scard(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count = if ctx.args.len() > 2 {
-        match String::from_utf8_lossy(&ctx.args[2]).parse::<i64>() {
-            Ok(v) => Some(v),
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::int(&ctx.args[2]) {
+            Some(v) => Some(v),
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         None
@@ -173,9 +173,9 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_spop(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count = if ctx.args.len() > 2 {
-        match String::from_utf8_lossy(&ctx.args[2]).parse::<usize>() {
-            Ok(v) => Some(v),
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::usize_(&ctx.args[2]) {
+            Some(v) => Some(v),
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         None
@@ -298,9 +298,9 @@ pub fn cmd_sinterstore(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_sintercard(ctx: &mut CommandContext) -> RespValue {
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 2 + numkeys {
