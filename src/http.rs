@@ -420,7 +420,7 @@ fn resp_object_to_json(obj: &crate::storage::RedisObject) -> Value {
             let members: Vec<Value> = z
                 .scores
                 .iter()
-                .map(|(k, _)| {
+                .map(|k| {
                     json!({
                         "member": String::from_utf8_lossy(&k.member).to_string(),
                         "score": k.score,
