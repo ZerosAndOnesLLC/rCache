@@ -16,6 +16,22 @@ const RDB_OPCODE_SELECTDB: u8 = 0xFE;
 const RDB_OPCODE_EXPIRETIME_MS: u8 = 0xFC;
 const RDB_OPCODE_EOF: u8 = 0xFF;
 
+/// Hard cap on per-entry collection size when loading. A corrupt or
+/// adversarial RDB file declaring `u32::MAX` items would otherwise allocate
+/// gigabytes before failing. Matches Redis's own multibulk ceiling.
+const MAX_RDB_COLLECTION_SIZE: u32 = 1_048_576 * 16;
+
+fn read_bounded_count(data: &[u8], cursor: usize, field: &str) -> io::Result<(u32, usize)> {
+    let (count, c) = read_u32_le(data, cursor)?;
+    if count > MAX_RDB_COLLECTION_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("RDB {} count {} exceeds maximum {}", field, count, MAX_RDB_COLLECTION_SIZE),
+        ));
+    }
+    Ok((count, c))
+}
+
 // Type bytes
 const RDB_TYPE_STRING: u8 = 0;
 const RDB_TYPE_LIST: u8 = 1;
@@ -39,7 +55,7 @@ pub fn save(store: &Store, path: &Path) -> io::Result<()> {
 
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_millis() as u64;
 
     // Per-database sections
@@ -190,7 +206,7 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
 
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_millis() as u64;
 
     loop {
@@ -296,7 +312,7 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             RedisObject::String(val)
         }
         RDB_TYPE_LIST => {
-            let (count, c) = read_u32_le(data, cursor)?;
+            let (count, c) = read_bounded_count(data, cursor, "list")?;
             cursor = c;
             let mut list = VecDeque::with_capacity(count as usize);
             for _ in 0..count {
@@ -307,7 +323,7 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             RedisObject::List(list)
         }
         RDB_TYPE_SET => {
-            let (count, c) = read_u32_le(data, cursor)?;
+            let (count, c) = read_bounded_count(data, cursor, "set")?;
             cursor = c;
             let mut set = HashSet::with_capacity(count as usize);
             for _ in 0..count {
@@ -318,7 +334,7 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             RedisObject::Set(set)
         }
         RDB_TYPE_SORTEDSET => {
-            let (count, c) = read_u32_le(data, cursor)?;
+            let (count, c) = read_bounded_count(data, cursor, "sortedset")?;
             cursor = c;
             let mut zset = SortedSetData::new();
             for _ in 0..count {
@@ -334,7 +350,7 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             RedisObject::SortedSet(zset)
         }
         RDB_TYPE_HASH => {
-            let (count, c) = read_u32_le(data, cursor)?;
+            let (count, c) = read_bounded_count(data, cursor, "hash")?;
             cursor = c;
             let mut hash = HashMap::with_capacity(count as usize);
             for _ in 0..count {
@@ -360,7 +376,7 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             stream.last_id = StreamId { ms: last_ms, seq: last_seq };
 
             // Read entries
-            let (entry_count, c) = read_u32_le(data, cursor)?;
+            let (entry_count, c) = read_bounded_count(data, cursor, "stream entries")?;
             cursor = c;
             for _ in 0..entry_count {
                 if cursor + 16 > data.len() {
@@ -370,7 +386,7 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
                 cursor += 8;
                 let seq = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
                 cursor += 8;
-                let (field_count, c) = read_u32_le(data, cursor)?;
+                let (field_count, c) = read_bounded_count(data, cursor, "stream fields")?;
                 cursor = c;
                 let mut fields = Vec::with_capacity(field_count as usize);
                 for _ in 0..field_count {
@@ -384,7 +400,7 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             }
 
             // Read consumer groups
-            let (group_count, c) = read_u32_le(data, cursor)?;
+            let (group_count, c) = read_bounded_count(data, cursor, "stream groups")?;
             cursor = c;
             for _ in 0..group_count {
                 let (name, c) = read_bytes(data, cursor)?;

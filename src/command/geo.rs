@@ -108,14 +108,9 @@ fn get_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a S
 }
 
 fn ensure_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut SortedSetData, RespValue> {
-    let db = ctx.db();
-    if !db.exists(key) {
-        db.set(key.clone(), RedisObject::SortedSet(SortedSetData::new()));
-    }
-    match db.get_mut(key) {
-        Some(RedisObject::SortedSet(z)) => Ok(z),
-        Some(_) => Err(RespValue::wrong_type()),
-        None => unreachable!(),
+    match ctx.db().get_or_insert_with(key, || RedisObject::SortedSet(SortedSetData::new())) {
+        RedisObject::SortedSet(z) => Ok(z),
+        _ => Err(RespValue::wrong_type()),
     }
 }
 

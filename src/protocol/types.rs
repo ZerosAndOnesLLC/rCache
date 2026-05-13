@@ -56,9 +56,34 @@ impl RespValue {
         RespValue::Array(items)
     }
 
+    /// Estimated serialized size in bytes — used to right-size the output buffer
+    /// and avoid reallocs during write_to. Conservative undershoot is OK; BytesMut
+    /// will grow if needed.
+    pub fn size_hint(&self) -> usize {
+        match self {
+            RespValue::SimpleString(s) => s.len() + 3,
+            RespValue::Error(s) => s.len() + 3,
+            RespValue::Integer(_) => 24,
+            RespValue::BulkString(b) => b.len() + 16,
+            RespValue::Array(items) => 16 + items.iter().map(|i| i.size_hint()).sum::<usize>(),
+            RespValue::Null => 5,
+            RespValue::NullArray => 5,
+            RespValue::Double(_) => 32,
+            RespValue::Boolean(_) => 4,
+            RespValue::BlobError(b) => b.len() + 16,
+            RespValue::VerbatimString(b) => b.len() + 16,
+            RespValue::BigNumber(s) => s.len() + 3,
+            RespValue::Map(entries) => 16 + entries.iter()
+                .map(|(k, v)| k.size_hint() + v.size_hint()).sum::<usize>(),
+            RespValue::RespSet(items) => 16 + items.iter().map(|i| i.size_hint()).sum::<usize>(),
+            RespValue::Push(items) => 16 + items.iter().map(|i| i.size_hint()).sum::<usize>(),
+            RespValue::Resp3Null => 3,
+        }
+    }
+
     /// Serialize this value into RESP wire format.
     pub fn serialize(&self) -> Bytes {
-        let mut buf = BytesMut::with_capacity(64);
+        let mut buf = BytesMut::with_capacity(self.size_hint());
         self.write_to(&mut buf);
         buf.freeze()
     }

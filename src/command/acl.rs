@@ -203,6 +203,9 @@ fn cmd_acl_setuser(ctx: &mut CommandContext) -> RespValue {
                 _ if rule.starts_with('>') => {
                     // Add password (>password)
                     let pass = &rule[1..];
+                    if pass.is_empty() {
+                        return RespValue::error("ERR password cannot be empty");
+                    }
                     use sha2::{Sha256, Digest};
                     let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
                     if !user.passwords.contains(&hash) {
@@ -213,6 +216,9 @@ fn cmd_acl_setuser(ctx: &mut CommandContext) -> RespValue {
                 _ if rule.starts_with('<') => {
                     // Remove password (<password)
                     let pass = &rule[1..];
+                    if pass.is_empty() {
+                        return RespValue::error("ERR password cannot be empty");
+                    }
                     use sha2::{Sha256, Digest};
                     let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
                     user.passwords.retain(|p| p != &hash);

@@ -19,6 +19,14 @@ pub fn compress(data: &[u8]) -> Bytes {
     Bytes::from(result)
 }
 
+fn read_original_len(data: &[u8]) -> Result<usize, &'static str> {
+    let bytes: [u8; 4] = data.get(4..8)
+        .ok_or("data too short for LZ4 header")?
+        .try_into()
+        .map_err(|_| "data too short for LZ4 header")?;
+    Ok(u32::from_le_bytes(bytes) as usize)
+}
+
 /// Decompress a value that has the LZ4 magic header.
 /// Returns the original uncompressed data.
 pub fn decompress(data: &[u8]) -> Result<Bytes, String> {
@@ -28,7 +36,7 @@ pub fn decompress(data: &[u8]) -> Result<Bytes, String> {
     if &data[0..4] != LZ4_MAGIC {
         return Err("Missing LZ4 magic header".to_string());
     }
-    let original_len = u32::from_le_bytes(data[4..8].try_into().unwrap()) as usize;
+    let original_len = read_original_len(data).map_err(|e| e.to_string())?;
     let compressed_data = &data[8..];
 
     match lz4_flex::decompress_size_prepended(compressed_data) {
@@ -48,8 +56,8 @@ pub fn decompress(data: &[u8]) -> Result<Bytes, String> {
 
 /// Get the original (uncompressed) size of a potentially compressed value.
 pub fn original_size(data: &[u8]) -> usize {
-    if is_compressed(data) && data.len() >= 8 {
-        u32::from_le_bytes(data[4..8].try_into().unwrap()) as usize
+    if is_compressed(data) {
+        read_original_len(data).unwrap_or(data.len())
     } else {
         data.len()
     }
@@ -62,22 +70,18 @@ pub fn maybe_compress(data: &[u8], enabled: bool, threshold: usize) -> Bytes {
     if enabled && data.len() > threshold && !is_compressed(data) {
         compress(data)
     } else {
-        Bytes::from(data.to_vec())
+        Bytes::copy_from_slice(data)
     }
 }
 
 /// Transparently decompress a value if it has the LZ4 header.
-pub fn maybe_decompress(data: &Bytes) -> Bytes {
+/// Returns an error if decompression fails — callers should propagate it rather than
+/// silently treating compressed bytes as cleartext.
+pub fn maybe_decompress(data: &Bytes) -> Result<Bytes, String> {
     if is_compressed(data) {
-        match decompress(data) {
-            Ok(decompressed) => decompressed,
-            Err(e) => {
-                tracing::warn!("Failed to decompress value: {}", e);
-                data.clone()
-            }
-        }
+        decompress(data)
     } else {
-        data.clone()
+        Ok(data.clone())
     }
 }
 
@@ -115,7 +119,7 @@ mod tests {
         let data = vec![b'A'; 2048];
         let result = maybe_compress(&data, true, 1024);
         assert!(is_compressed(&result));
-        let decompressed = maybe_decompress(&result);
+        let decompressed = maybe_decompress(&result).unwrap();
         assert_eq!(decompressed.as_ref(), data.as_slice());
     }
 
@@ -129,7 +133,21 @@ mod tests {
     #[test]
     fn test_maybe_decompress_not_compressed() {
         let data = Bytes::from("not compressed");
-        let result = maybe_decompress(&data);
+        let result = maybe_decompress(&data).unwrap();
+        assert_eq!(result, data);
+    }
+
+    #[test]
+    fn test_short_data_no_panic() {
+        // Data with the LZ4 magic but truncated must not panic
+        let data = Bytes::from_static(b"LZ4C");
+        let result = maybe_decompress(&data).unwrap();
+        // 4 bytes < 8 so is_compressed returns false, passthrough
+        assert_eq!(result, data);
+
+        // 8 bytes exactly — is_compressed requires >8, so still passthrough
+        let data = Bytes::from_static(b"LZ4Cabcd");
+        let result = maybe_decompress(&data).unwrap();
         assert_eq!(result, data);
     }
 }

@@ -62,6 +62,13 @@ async fn handle_request(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
+    // /health is the only unauthenticated endpoint (liveness probe).
+    if !(method == Method::GET && path == "/health") {
+        if let Some(resp) = check_auth(&req, &state).await {
+            return Ok(resp);
+        }
+    }
+
     let result = match (method, path.as_str()) {
         (Method::GET, "/health") => handle_health(&state),
         (Method::GET, "/info") => handle_info(&state).await,
@@ -87,6 +94,69 @@ async fn handle_request(
     };
 
     result
+}
+
+/// Validate request authentication. Returns `None` if the request is authorized,
+/// `Some(401-response)` otherwise.
+///
+/// Accepted credentials (any one):
+///   * `Authorization: Bearer <password>` matching `requirepass`
+///   * `Authorization: Bearer <password>` matching any ACL user's hashed password
+///
+/// If no `requirepass` is set AND every ACL user is `no_pass` or has no passwords
+/// configured, the API is open (matching Redis no-auth behavior).
+async fn check_auth(
+    req: &Request<Incoming>,
+    state: &Arc<SharedState>,
+) -> Option<Response<Full<Bytes>>> {
+    let has_requirepass = state.config.requirepass.is_some();
+    let has_acl_password = {
+        let users = state.acl_users.lock().await;
+        users.values().any(|u| !u.no_pass && !u.passwords.is_empty())
+    };
+
+    if !has_requirepass && !has_acl_password {
+        return None;
+    }
+
+    let token = req
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
+
+    let token = match token {
+        Some(t) => t,
+        None => return Some(unauthorized_response()),
+    };
+
+    if let Some(ref req_pass) = state.config.requirepass {
+        if token == *req_pass {
+            return None;
+        }
+    }
+
+    use sha2::{Digest, Sha256};
+    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let users = state.acl_users.lock().await;
+    for user in users.values() {
+        if user.enabled && user.passwords.contains(&hash) {
+            return None;
+        }
+    }
+
+    Some(unauthorized_response())
+}
+
+fn unauthorized_response() -> Response<Full<Bytes>> {
+    let body = serde_json::to_vec(&json!({"error": "unauthorized"})).unwrap_or_default();
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("Content-Type", "application/json")
+        .header("WWW-Authenticate", "Bearer")
+        .body(Full::new(Bytes::from(body)))
+        .expect("static response builder")
 }
 
 fn handle_health(state: &SharedState) -> Result<Response<Full<Bytes>>, BoxError> {

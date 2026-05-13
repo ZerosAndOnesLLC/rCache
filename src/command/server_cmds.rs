@@ -57,7 +57,7 @@ pub fn cmd_swapdb(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_time(_ctx: &mut CommandContext) -> RespValue {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = now.as_secs();
     let micros = now.subsec_micros();
     RespValue::array(vec![

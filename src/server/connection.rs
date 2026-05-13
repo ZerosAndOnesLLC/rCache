@@ -177,12 +177,9 @@ impl Connection {
         let mut pubsub = self.state.pubsub.lock().await;
         pubsub.remove_client(self.client_id);
         drop(pubsub);
-        // Clean up tracking state
         if self.tracking_enabled {
-            let mut tracked = self.state.tracked_clients.lock().await;
-            tracked.remove(&self.client_id);
-            let mut senders = self.state.tracking_senders.lock().await;
-            senders.remove(&self.client_id);
+            let mut tracking = self.state.tracking.lock().await;
+            tracking.remove_client(self.client_id);
         }
     }
 
@@ -345,21 +342,16 @@ impl Connection {
                 let onoff = String::from_utf8_lossy(&args[2]).to_uppercase();
                 if onoff == "ON" {
                     self.tracking_enabled = true;
-                    // Register tracking: always lock tracked_clients first, then tracking_senders
-                    let mut tracked = self.state.tracked_clients.lock().await;
-                    tracked.entry(self.client_id).or_default();
                     if let Some(tx) = self.tracking_tx.clone() {
-                        let mut senders = self.state.tracking_senders.lock().await;
-                        senders.insert(self.client_id, tx);
+                        let mut tracking = self.state.tracking.lock().await;
+                        tracking.enable(self.client_id, tx);
                     }
                     return RespValue::ok();
                 } else if onoff == "OFF" {
                     self.tracking_enabled = false;
                     self.tracked_keys.clear();
-                    let mut tracked = self.state.tracked_clients.lock().await;
-                    tracked.remove(&self.client_id);
-                    let mut senders = self.state.tracking_senders.lock().await;
-                    senders.remove(&self.client_id);
+                    let mut tracking = self.state.tracking.lock().await;
+                    tracking.remove_client(self.client_id);
                     return RespValue::ok();
                 }
             }
@@ -540,14 +532,20 @@ impl Connection {
             return RespValue::simple_string("RESET");
         }
 
+        // Only clone args for AOF/tracking when this is a write command or the
+        // connection is in client-tracking mode — saves a Vec<Bytes> clone per
+        // read for every connection (P7 from the audit). cmd_name is always
+        // cloned; it's a tiny String compared to args.
         let cmd_name_for_aof = cmd_name.clone();
-        let args_for_aof = args.clone();
+        let is_write = crate::persistence::aof::is_write_command(&cmd_name);
+        let need_args_copy = is_write || self.tracking_enabled;
+        let args_for_aof: Vec<Bytes> = if need_args_copy { args.clone() } else { Vec::new() };
 
         // Execute command with store lock
         let mut store = self.state.store.lock().await;
 
         // Check memory eviction before write commands
-        if crate::persistence::aof::is_write_command(&cmd_name) {
+        if is_write {
             let maxmemory = self.state.config.maxmemory;
             let policy = self.state.config.maxmemory_policy.clone();
             let samples = self.state.config.maxmemory_samples;
@@ -576,14 +574,12 @@ impl Connection {
         if self.tracking_enabled && is_read_command(&cmd_name_for_aof) && args_for_aof.len() > 1 {
             let key = args_for_aof[1].clone();
             self.tracked_keys.insert(key.clone());
-            let mut tracked = self.state.tracked_clients.lock().await;
-            if let Some(keys) = tracked.get_mut(&self.client_id) {
-                keys.insert(key);
-            }
+            let mut tracking = self.state.tracking.lock().await;
+            tracking.track(self.client_id, key);
         }
 
         // Append to AOF if this was a write command and it succeeded
-        if crate::persistence::aof::is_write_command(&cmd_name_for_aof) {
+        if is_write {
             if !matches!(result, RespValue::Error(_)) {
                 let mut aof = self.state.aof_writer.lock().await;
                 if let Some(writer) = aof.as_mut() {
@@ -593,25 +589,25 @@ impl Connection {
                 }
             }
 
-            // Client-side caching: send invalidation to tracking clients
+            // Client-side caching: send invalidation to tracking clients.
+            // O(1) lookup via reverse index; senders are cloned out so we don't
+            // hold the tracking lock across send() (which can block on a full
+            // unbounded channel — extremely rare but the cleaner pattern).
             if args_for_aof.len() > 1 {
                 let mutated_key = &args_for_aof[1];
-                let tracked = self.state.tracked_clients.lock().await;
-                let senders = self.state.tracking_senders.lock().await;
-                for (client_id, keys) in tracked.iter() {
-                    if *client_id == self.client_id {
-                        continue;
-                    }
-                    if keys.contains(mutated_key) {
-                        if let Some(sender) = senders.get(client_id) {
-                            let invalidation = RespValue::Push(vec![
-                                RespValue::bulk_string(Bytes::from("invalidate")),
-                                RespValue::array(vec![
-                                    RespValue::bulk_string(mutated_key.clone()),
-                                ]),
-                            ]);
-                            let _ = sender.send(invalidation);
-                        }
+                let targets = {
+                    let tracking = self.state.tracking.lock().await;
+                    tracking.invalidation_targets(mutated_key, self.client_id)
+                };
+                if !targets.is_empty() {
+                    let invalidation = RespValue::Push(vec![
+                        RespValue::bulk_string(Bytes::from("invalidate")),
+                        RespValue::array(vec![
+                            RespValue::bulk_string(mutated_key.clone()),
+                        ]),
+                    ]);
+                    for sender in &targets {
+                        let _ = sender.send(invalidation.clone());
                     }
                 }
             }
@@ -822,21 +818,41 @@ impl Connection {
         RespValue::error("WRONGPASS invalid username-password pair or user is disabled.")
     }
 
-    fn handle_auth_hello(&mut self, _username: &Bytes, password: &Bytes) -> Option<RespValue> {
-        match &self.state.config.requirepass {
-            Some(pass) => {
-                let provided = String::from_utf8_lossy(password).to_string();
-                if provided == *pass {
+    fn handle_auth_hello(&mut self, username: &Bytes, password: &Bytes) -> Option<RespValue> {
+        let username = String::from_utf8_lossy(username).to_string();
+        let password = String::from_utf8_lossy(password).to_string();
+
+        if username == "default" {
+            if let Some(ref req_pass) = self.state.config.requirepass {
+                if password == *req_pass {
                     self.authenticated = true;
-                    None
-                } else {
-                    Some(RespValue::error("WRONGPASS invalid username-password pair or user is disabled."))
+                    self.auth_username = username;
+                    return None;
                 }
             }
-            None => {
-                Some(RespValue::error("ERR Client sent AUTH, but no password is set."))
+        }
+
+        if let Ok(acl_users) = self.state.acl_users.try_lock() {
+            if let Some(user) = acl_users.get(&username) {
+                if !user.enabled {
+                    return Some(RespValue::error("WRONGPASS invalid username-password pair or user is disabled."));
+                }
+                if user.no_pass {
+                    self.authenticated = true;
+                    self.auth_username = username;
+                    return None;
+                }
+                use sha2::{Sha256, Digest};
+                let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
+                if user.passwords.contains(&hash) {
+                    self.authenticated = true;
+                    self.auth_username = username;
+                    return None;
+                }
             }
         }
+
+        Some(RespValue::error("WRONGPASS invalid username-password pair or user is disabled."))
     }
 
     // === Pub/Sub handlers ===
@@ -1142,9 +1158,20 @@ impl Connection {
 
 /// Compute a simple version/fingerprint of a key's value for WATCH.
 /// Returns None if the key doesn't exist.
+///
+/// Fast path: every Database mutation bumps `db.key_version(key)`, so for any
+/// existing key we just return that counter — O(1) regardless of value size.
+/// We keep the content-hashing fallback below for keys that pre-date the
+/// version counter (e.g., freshly loaded RDB) where the version is unset.
 fn compute_key_version(db: &mut crate::storage::Database, key: &Bytes) -> Option<u64> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
+
+    if let Some(v) = db.key_version(key) {
+        if v != 0 {
+            return Some(v);
+        }
+    }
 
     let obj = db.get(key)?;
     let mut hasher = DefaultHasher::new();

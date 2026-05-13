@@ -246,10 +246,65 @@ pub struct SharedState {
     pub slowlog_next_id: AtomicU64,
     /// Named namespaces (multi-tenancy).
     pub namespaces: Mutex<HashMap<String, Store>>,
-    /// Client tracking: client_id -> set of tracked keys.
-    pub tracked_clients: Mutex<HashMap<u64, HashSet<Bytes>>>,
-    /// Client tracking senders: client_id -> sender for invalidation messages.
-    pub tracking_senders: Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<RespValue>>>,
+    /// Client tracking state. A single mutex protects the forward index
+    /// (client_id -> keys it tracks), the senders, and the reverse index
+    /// (key -> client_ids interested in it). Consolidating into one mutex
+    /// eliminates lock-ordering hazards and lets writes consult the reverse
+    /// index in O(1) instead of iterating every tracked client.
+    pub tracking: Mutex<TrackingState>,
+}
+
+#[derive(Default)]
+pub struct TrackingState {
+    /// client_id -> keys it tracks.
+    pub clients: HashMap<u64, HashSet<Bytes>>,
+    /// client_id -> invalidation sender.
+    pub senders: HashMap<u64, tokio::sync::mpsc::UnboundedSender<RespValue>>,
+    /// key -> client_ids tracking this key (reverse index).
+    pub keys: HashMap<Bytes, HashSet<u64>>,
+}
+
+impl TrackingState {
+    pub fn track(&mut self, client_id: u64, key: Bytes) {
+        self.clients.entry(client_id).or_default().insert(key.clone());
+        self.keys.entry(key).or_default().insert(client_id);
+    }
+
+    pub fn enable(&mut self, client_id: u64, sender: tokio::sync::mpsc::UnboundedSender<RespValue>) {
+        self.clients.entry(client_id).or_default();
+        self.senders.insert(client_id, sender);
+    }
+
+    pub fn remove_client(&mut self, client_id: u64) {
+        self.senders.remove(&client_id);
+        if let Some(keys) = self.clients.remove(&client_id) {
+            for key in keys {
+                if let Some(set) = self.keys.get_mut(&key) {
+                    set.remove(&client_id);
+                    if set.is_empty() {
+                        self.keys.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Iterate clients interested in a mutated key, skipping `exclude`.
+    /// Returns owned senders to avoid holding an iterator across `.send()`.
+    pub fn invalidation_targets(
+        &self,
+        key: &Bytes,
+        exclude: u64,
+    ) -> Vec<tokio::sync::mpsc::UnboundedSender<RespValue>> {
+        match self.keys.get(key) {
+            Some(set) => set
+                .iter()
+                .filter(|&&id| id != exclude)
+                .filter_map(|id| self.senders.get(id).cloned())
+                .collect(),
+            None => Vec::new(),
+        }
+    }
 }
 
 pub struct Server {
@@ -316,8 +371,7 @@ impl Server {
             slowlog: Mutex::new(Vec::new()),
             slowlog_next_id: AtomicU64::new(0),
             namespaces: Mutex::new(HashMap::new()),
-            tracked_clients: Mutex::new(HashMap::new()),
-            tracking_senders: Mutex::new(HashMap::new()),
+            tracking: Mutex::new(TrackingState::default()),
         });
 
         // Start HTTP/REST API server if configured
@@ -462,10 +516,16 @@ fn build_tls_acceptor(
         .map_err(|e| format!("Failed to parse TLS key: {}", e))?
         .ok_or("No private key found in TLS key file")?;
 
-    let config = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| format!("Failed to build TLS config: {}", e))?;
+    // Build a server config restricted to TLS 1.2 and 1.3. rustls 0.23's default
+    // crypto provider already excludes weak ciphers; pinning protocol versions
+    // guards against downgrade-style misconfiguration if defaults change.
+    let config = rustls::ServerConfig::builder_with_protocol_versions(&[
+        &rustls::version::TLS13,
+        &rustls::version::TLS12,
+    ])
+    .with_no_client_auth()
+    .with_single_cert(certs, key)
+    .map_err(|e| format!("Failed to build TLS config: {}", e))?;
 
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
 }

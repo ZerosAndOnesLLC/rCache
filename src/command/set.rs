@@ -21,14 +21,9 @@ fn get_set_mut<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'
 }
 
 fn ensure_set<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut HashSet<Bytes>, RespValue> {
-    let db = ctx.db();
-    if !db.exists(key) {
-        db.set(key.clone(), RedisObject::Set(HashSet::new()));
-    }
-    match db.get_mut(key) {
-        Some(RedisObject::Set(s)) => Ok(s),
-        Some(_) => Err(RespValue::wrong_type()),
-        None => unreachable!(),
+    match ctx.db().get_or_insert_with(key, || RedisObject::Set(HashSet::new())) {
+        RedisObject::Set(s) => Ok(s),
+        _ => Err(RespValue::wrong_type()),
     }
 }
 

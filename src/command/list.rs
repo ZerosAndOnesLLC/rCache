@@ -13,14 +13,9 @@ fn get_list<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a m
 }
 
 fn ensure_list<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut VecDeque<Bytes>, RespValue> {
-    let db = ctx.db();
-    if !db.exists(key) {
-        db.set(key.clone(), RedisObject::List(VecDeque::new()));
-    }
-    match db.get_mut(key) {
-        Some(RedisObject::List(list)) => Ok(list),
-        Some(_) => Err(RespValue::wrong_type()),
-        None => unreachable!(),
+    match ctx.db().get_or_insert_with(key, || RedisObject::List(VecDeque::new())) {
+        RedisObject::List(list) => Ok(list),
+        _ => Err(RespValue::wrong_type()),
     }
 }
 

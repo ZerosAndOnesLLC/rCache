@@ -1434,8 +1434,16 @@ pub fn cmd_xpending(ctx: &mut CommandContext) -> RespValue {
             ]);
         }
 
-        let min_id = group.pel.keys().next().unwrap().to_string();
-        let max_id = group.pel.keys().next_back().unwrap().to_string();
+        // Defensive: total>0 was checked above, but extracting the bounds via
+        // safe accessors avoids any panic if the PEL was concurrently modified.
+        let min_id = match group.pel.keys().next() {
+            Some(id) => id.to_string(),
+            None => return RespValue::array(vec![RespValue::integer(0); 4]),
+        };
+        let max_id = match group.pel.keys().next_back() {
+            Some(id) => id.to_string(),
+            None => return RespValue::array(vec![RespValue::integer(0); 4]),
+        };
 
         let mut consumer_counts: HashMap<Bytes, i64> = HashMap::new();
         for pe in group.pel.values() {
@@ -1745,17 +1753,11 @@ pub fn cmd_xsetid(ctx: &mut CommandContext) -> RespValue {
         Err(e) => return e,
     };
 
-    let db = ctx.db();
-    if !db.exists(&key) {
-        db.set(key.clone(), RedisObject::Stream(StreamData::new()));
-    }
-
-    match db.get_mut(&key) {
-        Some(RedisObject::Stream(s)) => {
+    match ctx.db().get_or_insert_with(&key, || RedisObject::Stream(StreamData::new())) {
+        RedisObject::Stream(s) => {
             s.last_id = new_id;
             RespValue::ok()
         }
-        Some(_) => RespValue::wrong_type(),
-        None => unreachable!(),
+        _ => RespValue::wrong_type(),
     }
 }

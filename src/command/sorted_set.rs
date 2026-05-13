@@ -21,14 +21,9 @@ fn get_zset_mut<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&
 }
 
 fn ensure_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut SortedSetData, RespValue> {
-    let db = ctx.db();
-    if !db.exists(key) {
-        db.set(key.clone(), RedisObject::SortedSet(SortedSetData::new()));
-    }
-    match db.get_mut(key) {
-        Some(RedisObject::SortedSet(z)) => Ok(z),
-        Some(_) => Err(RespValue::wrong_type()),
-        None => unreachable!(),
+    match ctx.db().get_or_insert_with(key, || RedisObject::SortedSet(SortedSetData::new())) {
+        RedisObject::SortedSet(z) => Ok(z),
+        _ => Err(RespValue::wrong_type()),
     }
 }
 
@@ -91,19 +86,26 @@ pub fn cmd_zadd(ctx: &mut CommandContext) -> RespValue {
         return RespValue::wrong_arity("zadd");
     }
 
-    let pairs: Vec<(f64, Bytes)> = ctx.args[i..].chunks(2)
+    let pairs: Vec<(f64, Bytes)> = match ctx.args[i..]
+        .chunks(2)
         .map(|c| {
             let score: f64 = match String::from_utf8_lossy(&c[0]).parse() {
                 Ok(v) => v,
                 Err(_) => return Err(RespValue::error("ERR value is not a valid float")),
             };
+            if score.is_nan() {
+                return Err(RespValue::error("ERR value is NaN"));
+            }
             Ok((score, c[1].clone()))
         })
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_else(|_| vec![]);
+        .collect::<Result<Vec<_>, RespValue>>()
+    {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
 
-    if pairs.is_empty() && (ctx.args.len() - i) > 0 {
-        return RespValue::error("ERR value is not a valid float");
+    if pairs.is_empty() {
+        return RespValue::wrong_arity("zadd");
     }
 
     let zset = match ensure_zset(ctx, &key) {

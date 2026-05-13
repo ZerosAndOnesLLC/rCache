@@ -66,6 +66,30 @@ impl Default for Config {
     }
 }
 
+/// Reject filenames that escape the working directory or are absolute.
+/// Returns the original on success, or an error message describing the violation.
+fn validate_persistence_filename(name: &str, field: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err(format!("{} cannot be empty", field));
+    }
+    let path = std::path::Path::new(name);
+    if path.is_absolute() {
+        return Err(format!("{} must be a relative filename, not an absolute path", field));
+    }
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                return Err(format!("{} must not contain '..' components", field));
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err(format!("{} must be a relative filename", field));
+            }
+            _ => {}
+        }
+    }
+    Ok(name.to_string())
+}
+
 impl Config {
     pub fn from_args() -> Self {
         let mut config = Self::default();
@@ -118,7 +142,13 @@ impl Config {
                 "--dbfilename" => {
                     i += 1;
                     if i < args.len() {
-                        config.rdb_filename = args[i].clone();
+                        match validate_persistence_filename(&args[i], "--dbfilename") {
+                            Ok(name) => config.rdb_filename = name,
+                            Err(e) => {
+                                eprintln!("Invalid configuration: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
                     }
                 }
                 "--appendonly" => {
@@ -130,7 +160,13 @@ impl Config {
                 "--appendfilename" => {
                     i += 1;
                     if i < args.len() {
-                        config.aof_filename = args[i].clone();
+                        match validate_persistence_filename(&args[i], "--appendfilename") {
+                            Ok(name) => config.aof_filename = name,
+                            Err(e) => {
+                                eprintln!("Invalid configuration: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
                     }
                 }
                 "--appendfsync" => {

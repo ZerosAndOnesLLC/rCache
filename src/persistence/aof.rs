@@ -104,10 +104,14 @@ impl AofWriter {
                     ])?;
                 }
 
-                // Collect expiry info
-                let expires: std::collections::HashMap<Bytes, Instant> = db.expires_iter()
-                    .map(|(k, v)| (k.clone(), *v))
-                    .collect();
+                // Compute the wall-clock baseline once per database. Inside the
+                // entry loop we use db.get_expire() — keeping the lookups in the
+                // original structure avoids the full clone of every TTL entry
+                // that the previous implementation performed up front.
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
 
                 for (key, value) in db.iter() {
                     match value {
@@ -183,13 +187,9 @@ impl AofWriter {
                     }
 
                     // Write PEXPIREAT if the key has an expiry
-                    if let Some(expire_at) = expires.get(key) {
-                        if *expire_at > now {
-                            let remaining = *expire_at - now;
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis() as u64;
+                    if let Some(expire_at) = db.get_expire(key) {
+                        if expire_at > now {
+                            let remaining = expire_at - now;
                             let expire_ms = now_ms + remaining.as_millis() as u64;
                             write_resp_command(&mut writer, &[
                                 Bytes::from("PEXPIREAT"),

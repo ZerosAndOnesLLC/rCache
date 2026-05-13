@@ -1,6 +1,6 @@
 [package]
 name = "rcache"
-version = "0.10.4"
+version = "0.11.0"
 edition = "2024"
 
 [dependencies]
@@ -21,6 +21,7 @@ rustls-pemfile = "2"
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 lz4_flex = "0.11"
 sha2 = "0.10"
+sha1 = "0.10"
 
 [dev-dependencies]
 redis = { version = "0.27", features = ["tokio-comp"] }

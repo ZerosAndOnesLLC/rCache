@@ -2,6 +2,10 @@ use std::time::{Duration, Instant};
 use super::store::Store;
 
 const MAX_CYCLE_DURATION: Duration = Duration::from_millis(25);
+/// Hard cap on how long a single database's expire pass may run. Without this,
+/// a database with many about-to-expire keys could consume the entire global
+/// budget and starve subsequent DBs.
+const MAX_PER_DB_DURATION: Duration = Duration::from_millis(10);
 
 /// Manages active key expiration across all databases.
 pub struct ExpirationManager {
@@ -23,9 +27,13 @@ impl ExpirationManager {
             if db.expires_len() == 0 {
                 continue;
             }
+            let db_start = Instant::now();
             loop {
                 if start.elapsed() >= MAX_CYCLE_DURATION {
                     return;
+                }
+                if db_start.elapsed() >= MAX_PER_DB_DURATION {
+                    break;
                 }
                 let deleted = db.expire_cycle(self.sample_size);
                 // If more than 25% were expired, repeat

@@ -113,7 +113,7 @@ pub fn cmd_expireat(ctx: &mut CommandContext) -> RespValue {
         return RespValue::error("ERR invalid expire time in 'expireat' command");
     }
     let (nx, xx, gt, lt) = parse_expire_flags(&ctx.args, 3);
-    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
     let delta = ts - now_secs;
     let when = if delta > 0 {
         Instant::now() + Duration::from_secs(delta as u64)
@@ -133,7 +133,7 @@ pub fn cmd_pexpireat(ctx: &mut CommandContext) -> RespValue {
         return RespValue::error("ERR invalid expire time in 'pexpireat' command");
     }
     let (nx, xx, gt, lt) = parse_expire_flags(&ctx.args, 3);
-    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
     let delta = ts_ms - now_ms;
     let when = if delta > 0 {
         Instant::now() + Duration::from_millis(delta as u64)
@@ -179,10 +179,13 @@ pub fn cmd_expiretime(ctx: &mut CommandContext) -> RespValue {
     match db.get_expire(&key) {
         Some(expire) => {
             let now = Instant::now();
-            let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
             if expire > now {
                 let delta = (expire - now).as_secs();
-                RespValue::integer((now_unix + delta) as i64)
+                match now_unix.checked_add(delta).and_then(|v| i64::try_from(v).ok()) {
+                    Some(v) => RespValue::integer(v),
+                    None => RespValue::integer(i64::MAX),
+                }
             } else {
                 RespValue::integer(-2)
             }
@@ -200,10 +203,10 @@ pub fn cmd_pexpiretime(ctx: &mut CommandContext) -> RespValue {
     match db.get_expire(&key) {
         Some(expire) => {
             let now = Instant::now();
-            let now_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+            let now_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
             if expire > now {
-                let delta_ms = (expire - now).as_millis() as i64;
-                RespValue::integer(now_unix_ms + delta_ms)
+                let delta_ms = i64::try_from((expire - now).as_millis()).unwrap_or(i64::MAX);
+                RespValue::integer(now_unix_ms.saturating_add(delta_ms))
             } else {
                 RespValue::integer(-2)
             }
@@ -493,17 +496,11 @@ pub fn cmd_move(ctx: &mut CommandContext) -> RespValue {
     RespValue::integer(1)
 }
 
-/// DUMP key - serialize key value (simplified stub)
-pub fn cmd_dump(ctx: &mut CommandContext) -> RespValue {
-    let key = ctx.args[1].clone();
-    let db = ctx.db();
-    match db.get(&key) {
-        Some(obj) => {
-            let data = format!("{:?}", obj);
-            RespValue::bulk_string(Bytes::from(data))
-        }
-        None => RespValue::Null,
-    }
+/// DUMP key — rCache does not implement Redis's binary DUMP/RESTORE wire
+/// format, so this returns an explicit unsupported error rather than leaking
+/// internal Debug formatting (which earlier versions did).
+pub fn cmd_dump(_ctx: &mut CommandContext) -> RespValue {
+    RespValue::error("ERR DUMP/RESTORE serialization not supported in rCache")
 }
 
 /// RESTORE key ttl serialized-value [REPLACE]

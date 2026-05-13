@@ -25,6 +25,25 @@ fn parse_float(obj: &RedisObject) -> Result<f64, RespValue> {
     }
 }
 
+/// Parse raw command-argument bytes as i64 without the `from_utf8_lossy` +
+/// `to_string` + `parse` chain (two allocations per call). Use this for hot
+/// paths like INCRBY/DECRBY/SETRANGE offsets etc.
+#[inline]
+fn parse_arg_int(b: &Bytes) -> Result<i64, RespValue> {
+    let s = std::str::from_utf8(b)
+        .map_err(|_| RespValue::error("ERR value is not an integer or out of range"))?;
+    s.parse::<i64>()
+        .map_err(|_| RespValue::error("ERR value is not an integer or out of range"))
+}
+
+#[inline]
+fn parse_arg_float(b: &Bytes) -> Result<f64, RespValue> {
+    let s = std::str::from_utf8(b)
+        .map_err(|_| RespValue::error("ERR value is not a valid float"))?;
+    s.parse::<f64>()
+        .map_err(|_| RespValue::error("ERR value is not a valid float"))
+}
+
 fn get_string<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a Bytes>, RespValue> {
     match ctx.db().get(key) {
         Some(RedisObject::String(b)) => Ok(Some(b)),
@@ -78,7 +97,7 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                     Ok(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
                 if ts <= now {
                     return RespValue::error("ERR invalid expire time in 'set' command");
                 }
@@ -93,7 +112,7 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                     Ok(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
-                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
                 if ts_ms <= now_ms {
                     return RespValue::error("ERR invalid expire time in 'set' command");
                 }
@@ -210,11 +229,16 @@ pub fn cmd_mset(ctx: &mut CommandContext) -> RespValue {
     if (ctx.args.len() - 1) % 2 != 0 {
         return RespValue::wrong_arity("mset");
     }
-    let pairs: Vec<(Bytes, Bytes)> = ctx.args[1..].chunks(2)
-        .map(|c| (c[0].clone(), c[1].clone()))
-        .collect();
-    for (key, value) in pairs {
+    // Iterate args directly — no intermediate Vec. ctx.args[i] clones are
+    // refcount-cheap (Bytes), so this avoids the structural Vec allocation
+    // that the earlier impl performed for every MSET batch.
+    let n = ctx.args.len();
+    let mut i = 1;
+    while i + 1 < n {
+        let key = ctx.args[i].clone();
+        let value = ctx.args[i + 1].clone();
         ctx.db().set(key, RedisObject::String(value));
+        i += 2;
     }
     RespValue::ok()
 }
@@ -223,17 +247,23 @@ pub fn cmd_msetnx(ctx: &mut CommandContext) -> RespValue {
     if (ctx.args.len() - 1) % 2 != 0 {
         return RespValue::wrong_arity("msetnx");
     }
-    // Check if any key exists first
-    let pairs: Vec<(Bytes, Bytes)> = ctx.args[1..].chunks(2)
-        .map(|c| (c[0].clone(), c[1].clone()))
-        .collect();
-    for (key, _) in &pairs {
-        if ctx.db().exists(key) {
+    // Existence check pass — clone Bytes (refcount-cheap) before db borrow.
+    let n = ctx.args.len();
+    let mut i = 1;
+    while i + 1 < n {
+        let k = ctx.args[i].clone();
+        if ctx.db().exists(&k) {
             return RespValue::integer(0);
         }
+        i += 2;
     }
-    for (key, value) in pairs {
+    // Write pass.
+    let mut i = 1;
+    while i + 1 < n {
+        let key = ctx.args[i].clone();
+        let value = ctx.args[i + 1].clone();
         ctx.db().set(key, RedisObject::String(value));
+        i += 2;
     }
     RespValue::integer(1)
 }
@@ -247,17 +277,17 @@ pub fn cmd_decr(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_incrby(ctx: &mut CommandContext) -> RespValue {
-    let delta: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
+    let delta = match parse_arg_int(&ctx.args[2]) {
         Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        Err(e) => return e,
     };
     incr_by(ctx, delta)
 }
 
 pub fn cmd_decrby(ctx: &mut CommandContext) -> RespValue {
-    let delta: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
+    let delta = match parse_arg_int(&ctx.args[2]) {
         Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        Err(e) => return e,
     };
     incr_by(ctx, -delta)
 }
@@ -286,9 +316,9 @@ fn incr_by(ctx: &mut CommandContext, delta: i64) -> RespValue {
 
 pub fn cmd_incrbyfloat(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let delta: f64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
+    let delta = match parse_arg_float(&ctx.args[2]) {
         Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not a valid float"),
+        Err(e) => return e,
     };
 
     let db = ctx.db();
@@ -457,7 +487,7 @@ pub fn cmd_getex(ctx: &mut CommandContext) -> RespValue {
                     Ok(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
                 if ts > now {
                     ctx.db().set_expire(&key, Instant::now() + Duration::from_secs(ts - now));
                 } else {
@@ -471,7 +501,7 @@ pub fn cmd_getex(ctx: &mut CommandContext) -> RespValue {
                     Ok(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
-                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
                 if ts_ms > now_ms {
                     ctx.db().set_expire(&key, Instant::now() + Duration::from_millis(ts_ms - now_ms));
                 } else {

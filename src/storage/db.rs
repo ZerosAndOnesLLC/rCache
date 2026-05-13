@@ -44,6 +44,11 @@ pub struct Database {
     pub(crate) lfu_map: HashMap<Bytes, LfuCounter>,
     /// Approximate memory usage in bytes.
     pub(crate) used_memory: usize,
+    /// Monotonic per-key version. Bumped on every mutation path (set, remove,
+    /// get_mut, get_or_insert_with). WATCH uses this to detect changes in O(1)
+    /// instead of rehashing the entire value.
+    pub(crate) versions: HashMap<Bytes, u64>,
+    pub(crate) version_clock: u64,
 }
 
 impl Database {
@@ -55,6 +60,22 @@ impl Database {
             lru_map: HashMap::new(),
             lfu_map: HashMap::new(),
             used_memory: 0,
+            versions: HashMap::new(),
+            version_clock: 0,
+        }
+    }
+
+    fn bump_version(&mut self, key: &Bytes) {
+        self.version_clock = self.version_clock.wrapping_add(1);
+        self.versions.insert(key.clone(), self.version_clock);
+    }
+
+    /// Monotonic key version. Returns None if the key doesn't exist.
+    pub fn key_version(&self, key: &Bytes) -> Option<u64> {
+        if self.data.contains_key(key) {
+            self.versions.get(key).copied().or(Some(0))
+        } else {
+            None
         }
     }
 
@@ -69,7 +90,8 @@ impl Database {
         self.data.get(key)
     }
 
-    /// Get a mutable reference to a value.
+    /// Get a mutable reference to a value. Bumps the key's version because
+    /// callers obtain &mut to mutate; WATCH semantics treat this as a change.
     pub fn get_mut(&mut self, key: &Bytes) -> Option<&mut RedisObject> {
         if self.is_expired(key) {
             self.remove(key);
@@ -77,7 +99,39 @@ impl Database {
         }
         self.touch_lru(key);
         self.touch_lfu(key);
+        if self.data.contains_key(key) {
+            self.bump_version(key);
+        }
         self.data.get_mut(key)
+    }
+
+    /// Get or insert a default value for a key in one hashmap lookup. Performs
+    /// lazy expiration first; if the key exists with a wrong type, the caller's
+    /// match arm will surface the WRONGTYPE error.
+    pub fn get_or_insert_with<F: FnOnce() -> RedisObject>(
+        &mut self,
+        key: &Bytes,
+        default: F,
+    ) -> &mut RedisObject {
+        if self.is_expired(key) {
+            self.remove(key);
+        }
+        self.touch_lru(key);
+        self.touch_lfu(key);
+
+        self.version_clock = self.version_clock.wrapping_add(1);
+        self.versions.insert(key.clone(), self.version_clock);
+
+        use std::collections::hash_map::Entry;
+        match self.data.entry(key.clone()) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => {
+                let value = default();
+                let new_size = key.len() + value.estimate_memory() + 64;
+                self.used_memory += new_size;
+                e.insert(value)
+            }
+        }
     }
 
     /// Set a value, removing any existing expiration.
@@ -85,6 +139,7 @@ impl Database {
         self.expires.remove(&key);
         self.touch_lru(&key);
         self.touch_lfu(&key);
+        self.bump_version(&key);
         // Update memory tracking
         let new_size = key.len() + value.estimate_memory() + 64;
         if let Some(old) = self.data.get(&key) {
@@ -99,6 +154,7 @@ impl Database {
     pub fn set_keep_ttl(&mut self, key: Bytes, value: RedisObject) {
         self.touch_lru(&key);
         self.touch_lfu(&key);
+        self.bump_version(&key);
         // Update memory tracking
         let new_size = key.len() + value.estimate_memory() + 64;
         if let Some(old) = self.data.get(&key) {
@@ -123,6 +179,7 @@ impl Database {
         self.expires.remove(key);
         self.lru_map.remove(key);
         self.lfu_map.remove(key);
+        self.versions.remove(key);
         if let Some(obj) = self.data.remove(key) {
             let size = key.len() + obj.estimate_memory() + 64;
             self.used_memory = self.used_memory.saturating_sub(size);

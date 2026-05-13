@@ -5,14 +5,9 @@ use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
 fn ensure_hash<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut HashMap<Bytes, Bytes>, RespValue> {
-    let db = ctx.db();
-    if !db.exists(key) {
-        db.set(key.clone(), RedisObject::Hash(HashMap::new()));
-    }
-    match db.get_mut(key) {
-        Some(RedisObject::Hash(h)) => Ok(h),
-        Some(_) => Err(RespValue::wrong_type()),
-        None => unreachable!(),
+    match ctx.db().get_or_insert_with(key, || RedisObject::Hash(HashMap::new())) {
+        RedisObject::Hash(h) => Ok(h),
+        _ => Err(RespValue::wrong_type()),
     }
 }
 
