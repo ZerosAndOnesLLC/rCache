@@ -213,11 +213,14 @@ pub fn cmd_psetex(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_mget(ctx: &mut CommandContext) -> RespValue {
-    let keys: Vec<Bytes> = ctx.args[1..].to_vec();
-    let mut results = Vec::with_capacity(keys.len());
-    for key in &keys {
+    let n = ctx.args.len();
+    let mut results = Vec::with_capacity(n.saturating_sub(1));
+    let mut idx = 1;
+    while idx < n {
+        let key = ctx.args[idx].clone();
+        idx += 1;
         let db = ctx.db();
-        match db.get(key) {
+        match db.get(&key) {
             Some(RedisObject::String(b)) => results.push(RespValue::bulk_string(b.clone())),
             _ => results.push(RespValue::Null),
         }
@@ -404,8 +407,9 @@ pub fn cmd_getrange(ctx: &mut CommandContext) -> RespValue {
             if s > e || s >= b.len() {
                 return RespValue::bulk_string(Bytes::new());
             }
-            let slice = &b[s..=e.min(b.len() - 1)];
-            RespValue::bulk_string(Bytes::from(slice.to_vec()))
+            // Zero-copy slice — Bytes::slice shares the underlying buffer via
+            // refcount instead of allocating a new Vec.
+            RespValue::bulk_string(b.slice(s..=e.min(b.len() - 1)))
         }
         Some(_) => RespValue::wrong_type(),
         None => RespValue::bulk_string(Bytes::new()),

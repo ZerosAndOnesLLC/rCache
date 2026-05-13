@@ -1,3 +1,5 @@
+#![warn(dead_code)]
+
 mod protocol;
 mod server;
 mod storage;

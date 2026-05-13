@@ -130,6 +130,7 @@ impl PubSubManager {
 
 /// ACL user definition.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AclUser {
     pub enabled: bool,
     /// SHA-256 hashed passwords.
@@ -198,6 +199,7 @@ pub struct LatencyStats {
 
 /// A slow log entry.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SlowLogEntry {
     pub id: u64,
     pub timestamp: u64,
@@ -209,11 +211,13 @@ pub struct SlowLogEntry {
 
 /// A named namespace containing its own store.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct NamespaceInfo {
     pub name: String,
     pub store: Store,
 }
 
+#[allow(dead_code)]
 pub struct SharedState {
     pub store: Mutex<Store>,
     pub config: Config,

@@ -200,7 +200,12 @@ pub fn cmd_config(ctx: &mut CommandContext) -> RespValue {
             if ctx.args.len() < 4 {
                 return RespValue::wrong_arity("config|set");
             }
-            RespValue::ok()
+            // Returning OK without applying changes misled operators who thought
+            // their parameter took effect. Be honest until SET is wired into a
+            // mutable runtime config. Restart with CLI flags to change values.
+            RespValue::error(
+                "ERR CONFIG SET is not supported in rCache; restart with the matching CLI flag",
+            )
         }
         "RESETSTAT" => RespValue::ok(),
         "REWRITE" => RespValue::ok(),

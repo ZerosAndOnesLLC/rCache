@@ -257,10 +257,10 @@ impl SortedSetData {
             .take_while(|(k, _)| {
                 if max_inclusive { k.score <= max } else { k.score < max }
             })
-            .filter(|(k, _)| {
-                if min_inclusive { k.score >= min } else { k.score > min }
+            .filter_map(|(k, _)| {
+                let in_min = if min_inclusive { k.score >= min } else { k.score > min };
+                if in_min { Some((k.member.clone(), k.score)) } else { None }
             })
-            .map(|(k, _)| (k.member.clone(), k.score))
             .collect()
     }
 

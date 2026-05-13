@@ -86,6 +86,7 @@ fn bloom_k(data: &[u8]) -> u32 {
     u32::from_le_bytes(data[16..20].try_into().unwrap())
 }
 
+#[allow(dead_code)] // exposed for future BF.INFO ERROR_RATE
 fn bloom_error_rate(data: &[u8]) -> f64 {
     f64::from_le_bytes(data[20..28].try_into().unwrap())
 }
@@ -748,6 +749,7 @@ fn topk_num_items(data: &[u8]) -> u32 {
     u32::from_le_bytes(data[24..28].try_into().unwrap())
 }
 
+#[allow(dead_code)] // mutator paired with topk_num_items getter for future use
 fn set_topk_num_items(data: &mut [u8], count: u32) {
     data[24..28].copy_from_slice(&count.to_le_bytes());
 }

@@ -84,6 +84,7 @@ pub struct Connection {
     tracking_enabled: bool,
     tracked_keys: HashSet<Bytes>,
     tracking_tx: Option<mpsc::UnboundedSender<RespValue>>,
+    #[allow(dead_code)] // receiver kept on Connection for future tracking-channel reads
     tracking_rx: Option<mpsc::UnboundedReceiver<RespValue>>,
     // Multi-tenancy namespace
     namespace: Option<String>,
@@ -546,12 +547,17 @@ impl Connection {
 
         // Check memory eviction before write commands
         if is_write {
-            let maxmemory = self.state.config.maxmemory;
-            let policy = self.state.config.maxmemory_policy.clone();
-            let samples = self.state.config.maxmemory_samples;
-            let lfu_log_factor = self.state.config.lfu_log_factor;
-            let lfu_decay_time = self.state.config.lfu_decay_time;
-            if store.check_memory_limit(maxmemory, &policy, samples, lfu_log_factor, lfu_decay_time).is_err() {
+            let cfg = &self.state.config;
+            if store
+                .check_memory_limit(
+                    cfg.maxmemory,
+                    &cfg.maxmemory_policy,
+                    cfg.maxmemory_samples,
+                    cfg.lfu_log_factor,
+                    cfg.lfu_decay_time,
+                )
+                .is_err()
+            {
                 return RespValue::error("OOM command not allowed when used memory > 'maxmemory'.");
             }
         }
