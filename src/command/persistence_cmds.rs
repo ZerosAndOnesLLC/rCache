@@ -56,9 +56,12 @@ pub fn cmd_bgrewriteaof(ctx: &mut CommandContext) -> RespValue {
     // Since we can't access SharedState from the command handler directly,
     // we write a temp AOF from the store and let it be picked up.
     let aof_path = std::path::Path::new("appendonly.aof");
-    let temp_path = aof_path.with_extension("aof.tmp");
+    let (file, temp_path) = match crate::persistence::util::create_temp_file(aof_path) {
+        Ok(v) => v,
+        Err(e) => return RespValue::error(format!("ERR AOF rewrite failed: {}", e)),
+    };
 
-    match rewrite_aof_from_store(ctx.store, &temp_path) {
+    match rewrite_aof_from_store(ctx.store, file) {
         Ok(()) => {
             // Atomically replace
             if let Err(e) = std::fs::rename(&temp_path, aof_path) {
@@ -70,13 +73,12 @@ pub fn cmd_bgrewriteaof(ctx: &mut CommandContext) -> RespValue {
     }
 }
 
-/// Helper to write all store data as AOF commands.
-fn rewrite_aof_from_store(store: &crate::storage::Store, path: &std::path::Path) -> std::io::Result<()> {
+/// Helper to write all store data as AOF commands into an already-open file.
+fn rewrite_aof_from_store(store: &crate::storage::Store, file: std::fs::File) -> std::io::Result<()> {
     use bytes::Bytes;
     use std::io::{Write, BufWriter};
     use crate::storage::types::RedisObject;
 
-    let file = std::fs::File::create(path)?;
     let mut writer = BufWriter::new(file);
     let now = std::time::Instant::now();
 

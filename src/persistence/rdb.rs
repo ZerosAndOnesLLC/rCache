@@ -43,8 +43,7 @@ const RDB_TYPE_JSON: u8 = 6;
 
 /// Save the entire store to an RDB file at the given path.
 pub fn save(store: &Store, path: &Path) -> io::Result<()> {
-    let temp_path = path.with_extension("rdb.tmp");
-    let mut file = std::fs::File::create(&temp_path)?;
+    let (mut file, temp_path) = crate::persistence::util::create_temp_file(path)?;
 
     // Magic header
     file.write_all(RDB_MAGIC)?;
@@ -240,15 +239,22 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
                 // Verify CRC64 if present (8 bytes after EOF marker)
                 if cursor + 8 <= data.len() {
                     let stored_crc = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                    // A stored CRC of 0 means checksums were disabled when the
+                    // file was written; only enforce when a checksum is present.
                     if stored_crc != 0 {
                         // Compute CRC64 of everything up to (but not including) the CRC bytes
                         // cursor points to right after the EOF opcode, so data[..cursor] includes EOF
                         let computed_crc = crc64_compute(&data[..cursor]);
                         if stored_crc != computed_crc {
-                            tracing::warn!(
-                                "RDB CRC64 mismatch: stored={:#x}, computed={:#x} (continuing anyway)",
-                                stored_crc, computed_crc
-                            );
+                            // Refuse to load a corrupt/tampered snapshot rather
+                            // than silently trusting mismatched data.
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "RDB CRC64 mismatch: stored={:#x}, computed={:#x}",
+                                    stored_crc, computed_crc
+                                ),
+                            ));
                         }
                     }
                 }

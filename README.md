@@ -52,6 +52,7 @@ redis-cli -p 6380
 | `--bind` | 0.0.0.0 | Bind address |
 | `--port` | 6379 | RESP protocol port |
 | `--requirepass` | (none) | Password for AUTH |
+| `--protected-mode` | yes | When enabled and no auth is configured, only loopback clients are accepted |
 | `--databases` | 16 | Number of databases |
 | `--maxclients` | 10000 | Max concurrent connections |
 | `--maxmemory` | 0 (unlimited) | Memory limit in bytes |

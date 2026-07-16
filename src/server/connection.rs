@@ -101,12 +101,17 @@ pub struct Connection {
     tracking_rx: Option<mpsc::UnboundedReceiver<RespValue>>,
     // Multi-tenancy namespace
     namespace: Option<String>,
-    // AUTH brute-force protection: count consecutive failures, reset on success.
-    auth_failures: u32,
+    // Peer IP, used for per-IP AUTH brute-force backoff that survives reconnects.
+    peer_ip: Option<std::net::IpAddr>,
 }
 
 impl Connection {
-    pub fn new(stream: MaybeTls, state: Arc<SharedState>, client_id: u64) -> Self {
+    pub fn new(
+        stream: MaybeTls,
+        state: Arc<SharedState>,
+        client_id: u64,
+        peer_ip: Option<std::net::IpAddr>,
+    ) -> Self {
         let authenticated = state.config.requirepass.is_none();
         let (tx, rx) = mpsc::unbounded_channel();
         let (tracking_tx, tracking_rx) = mpsc::unbounded_channel();
@@ -132,8 +137,8 @@ impl Connection {
             tracked_keys: HashSet::new(),
             tracking_tx: Some(tracking_tx),
             tracking_rx: Some(tracking_rx),
-            auth_failures: 0,
             namespace: None,
+            peer_ip,
         }
     }
 
@@ -375,14 +380,16 @@ impl Connection {
                     cmd_name.to_lowercase()
                 ));
             }
-            // Check key patterns for commands that have keys
-            if args.len() > 1 && !acl::user_has_all_keys(&self.auth_username) {
-                let key_str = String::from_utf8_lossy(&args[1]);
-                if !acl::is_key_allowed(&self.auth_username, &key_str) {
-                    return RespValue::error(
-                        "NOPERM this user has no permissions to access one of the keys used as arguments"
-                            .to_string(),
-                    );
+            // Check key patterns against every key argument of this command.
+            if !acl::user_has_all_keys(&self.auth_username) {
+                for key in acl::command_keys(&cmd_name, &args) {
+                    let key_str = String::from_utf8_lossy(key);
+                    if !acl::is_key_allowed(&self.auth_username, &key_str) {
+                        return RespValue::error(
+                            "NOPERM this user has no permissions to access one of the keys used as arguments"
+                                .to_string(),
+                        );
+                    }
                 }
             }
         }
@@ -820,18 +827,38 @@ impl Connection {
         }
     }
 
-    /// After `BACKOFF_AFTER` consecutive failed AUTH/HELLO attempts on this
-    /// connection, sleep before returning the failure response. Doubles each
-    /// time, capped at 5 s. Resets to zero on a successful auth.
+    /// Record a failed AUTH/HELLO attempt keyed by peer IP and, once more than
+    /// `BACKOFF_AFTER` failures have accumulated for that IP, sleep with
+    /// exponential backoff before returning the failure. Tracking per IP (rather
+    /// than per connection) means an attacker cannot reset the delay by opening
+    /// a new connection for each guess. The counter decays after an idle window.
     async fn auth_backoff(&mut self) {
         const BACKOFF_AFTER: u32 = 5;
         const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
+        const DECAY: std::time::Duration = std::time::Duration::from_secs(60);
 
-        self.auth_failures = self.auth_failures.saturating_add(1);
-        if self.auth_failures <= BACKOFF_AFTER {
+        let ip = match self.peer_ip {
+            Some(ip) => ip,
+            None => return,
+        };
+
+        let failures = {
+            let now = std::time::Instant::now();
+            let mut map = self.state.auth_failures.lock().await;
+            let entry = map.entry(ip).or_insert((0, now));
+            // Reset the counter if the last failure was long enough ago.
+            if now.duration_since(entry.1) > DECAY {
+                entry.0 = 0;
+            }
+            entry.0 = entry.0.saturating_add(1);
+            entry.1 = now;
+            entry.0
+        };
+
+        if failures <= BACKOFF_AFTER {
             return;
         }
-        let over = self.auth_failures - BACKOFF_AFTER;
+        let over = failures - BACKOFF_AFTER;
         let ms: u64 = 100u64.saturating_mul(1u64 << over.min(10));
         let delay = std::time::Duration::from_millis(ms).min(MAX_BACKOFF);
         tokio::time::sleep(delay).await;
@@ -840,7 +867,12 @@ impl Connection {
     fn auth_success(&mut self, username: String) {
         self.authenticated = true;
         self.auth_username = username;
-        self.auth_failures = 0;
+        // Clear this IP's accumulated failures on a successful auth.
+        if let Some(ip) = self.peer_ip {
+            if let Ok(mut map) = self.state.auth_failures.try_lock() {
+                map.remove(&ip);
+            }
+        }
     }
 
     async fn handle_auth(&mut self, args: &[Bytes]) -> RespValue {
@@ -908,6 +940,9 @@ impl Connection {
     // === Pub/Sub handlers ===
 
     async fn handle_subscribe(&mut self, args: &[Bytes]) -> RespValue {
+        if args.len() < 2 {
+            return RespValue::error("ERR wrong number of arguments for 'subscribe' command");
+        }
         let channels: Vec<Bytes> = args[1..].to_vec();
         let mut responses = Vec::new();
 
@@ -981,6 +1016,9 @@ impl Connection {
     }
 
     async fn handle_psubscribe(&mut self, args: &[Bytes]) -> RespValue {
+        if args.len() < 2 {
+            return RespValue::error("ERR wrong number of arguments for 'psubscribe' command");
+        }
         let patterns: Vec<Bytes> = args[1..].to_vec();
         let mut responses = Vec::new();
 

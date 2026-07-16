@@ -85,12 +85,12 @@ fn parse_stream_id_for_range_end(s: &str) -> Result<StreamId, RespValue> {
 fn generate_id(stream: &StreamData) -> StreamId {
     let ms = current_time_ms();
     let seq = if ms == stream.last_id.ms {
-        stream.last_id.seq + 1
+        stream.last_id.seq.saturating_add(1)
     } else if ms > stream.last_id.ms {
         0
     } else {
         // Clock went backwards, use last_id.ms
-        stream.last_id.seq + 1
+        stream.last_id.seq.saturating_add(1)
     };
     let actual_ms = if ms >= stream.last_id.ms {
         ms
@@ -369,11 +369,11 @@ pub fn cmd_xadd(ctx: &mut CommandContext) -> RespValue {
             if parts[1] == "*" {
                 // Auto-sequence for given ms
                 if ms == stream.last_id.ms {
-                    stream.last_id.seq + 1
+                    stream.last_id.seq.saturating_add(1)
                 } else if ms > stream.last_id.ms {
                     0
                 } else {
-                    stream.last_id.seq + 1
+                    stream.last_id.seq.saturating_add(1)
                 }
             } else {
                 match parts[1].parse() {
@@ -388,7 +388,7 @@ pub fn cmd_xadd(ctx: &mut CommandContext) -> RespValue {
         } else {
             // No seq specified, auto-assign
             if ms == stream.last_id.ms {
-                stream.last_id.seq + 1
+                stream.last_id.seq.saturating_add(1)
             } else {
                 0
             }

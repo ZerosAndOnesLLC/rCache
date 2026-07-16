@@ -411,6 +411,21 @@ fn execute_redis_command(
         );
     }
 
+    // Block non-deterministic commands whose output could drive a write, so a
+    // script's effect stays a pure function of its inputs. This keeps scripts
+    // deterministic for AOF/replication consistency (matches Redis's historical
+    // deterministic-script requirement).
+    if matches!(
+        cmd.as_str(),
+        "RANDOMKEY" | "SRANDMEMBER" | "ZRANDMEMBER" | "HRANDFIELD" | "TIME"
+            | "SCAN" | "SSCAN" | "HSCAN" | "ZSCAN"
+    ) {
+        return RespValue::error(format!(
+            "ERR '{}' is not allowed from script: it is non-deterministic",
+            cmd.to_lowercase()
+        ));
+    }
+
     let byte_args: Vec<Bytes> = args.iter().map(|s| Bytes::from(s.clone())).collect();
 
     // Use the command registry to execute

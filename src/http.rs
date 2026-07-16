@@ -456,12 +456,14 @@ async fn handle_command(
                 cmd_name.to_lowercase()
             ));
         }
-        if args.len() > 1 && !acl::user_has_all_keys(user) {
-            let key_str = String::from_utf8_lossy(&args[1]);
-            if !acl::is_key_allowed(user, &key_str) {
-                return forbidden_response(
-                    "this user has no permissions to access one of the keys used as arguments",
-                );
+        if !acl::user_has_all_keys(user) {
+            for key in acl::command_keys(&cmd_name, &args) {
+                let key_str = String::from_utf8_lossy(key);
+                if !acl::is_key_allowed(user, &key_str) {
+                    return forbidden_response(
+                        "this user has no permissions to access one of the keys used as arguments",
+                    );
+                }
             }
         }
     }
