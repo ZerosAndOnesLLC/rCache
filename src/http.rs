@@ -63,11 +63,14 @@ async fn handle_request(
     let path = req.uri().path().to_string();
 
     // /health is the only unauthenticated endpoint (liveness probe).
-    if !(method == Method::GET && path == "/health") {
-        if let Some(resp) = check_auth(&req, &state).await {
-            return Ok(resp);
+    let user = if method == Method::GET && path == "/health" {
+        "default".to_string()
+    } else {
+        match check_auth(&req, &state).await {
+            Ok(u) => u,
+            Err(resp) => return Ok(resp),
         }
-    }
+    };
 
     let result = match (method, path.as_str()) {
         (Method::GET, "/health") => handle_health(&state),
@@ -75,25 +78,30 @@ async fn handle_request(
         (Method::GET, "/metrics") => handle_metrics(&state).await,
         (Method::POST, "/api/v1/command") => {
             let body = req.collect().await?.to_bytes();
-            handle_command(&state, &body).await
+            handle_command(&state, &user, &body).await
         }
         (Method::GET, p) if p.starts_with("/api/v1/") => {
             let key = &p["/api/v1/".len()..];
-            handle_get_key(&state, key).await
+            handle_get_key(&state, &user, key).await
         }
         (Method::PUT, p) if p.starts_with("/api/v1/") => {
             let key = &p["/api/v1/".len()..];
             let body = req.collect().await?.to_bytes();
-            handle_put_key(&state, key, &body).await
+            handle_put_key(&state, &user, key, &body).await
         }
         (Method::DELETE, p) if p.starts_with("/api/v1/") => {
             let key = &p["/api/v1/".len()..];
-            handle_delete_key(&state, key).await
+            handle_delete_key(&state, &user, key).await
         }
         _ => json_response(StatusCode::NOT_FOUND, &json!({"error": "not found"})),
     };
 
     result
+}
+
+/// 403 response for an authenticated user lacking permission for a command/key.
+fn forbidden_response(msg: &str) -> Result<Response<Full<Bytes>>, BoxError> {
+    json_response(StatusCode::FORBIDDEN, &json!({"error": msg}))
 }
 
 /// Validate request authentication. Returns `None` if the request is authorized,
@@ -108,15 +116,15 @@ async fn handle_request(
 async fn check_auth(
     req: &Request<Incoming>,
     state: &Arc<SharedState>,
-) -> Option<Response<Full<Bytes>>> {
-    let has_requirepass = state.config.requirepass.is_some();
-    let has_acl_password = {
-        let users = state.acl_users.lock().await;
-        users.values().any(|u| !u.no_pass && !u.passwords.is_empty())
-    };
+) -> Result<String, Response<Full<Bytes>>> {
+    use crate::command::acl;
 
+    let has_requirepass = state.config.requirepass.is_some();
+    let has_acl_password = acl::any_password_required();
+
+    // Open (no auth configured): act as the unrestricted default user.
     if !has_requirepass && !has_acl_password {
-        return None;
+        return Ok("default".to_string());
     }
 
     let token = req
@@ -128,25 +136,19 @@ async fn check_auth(
 
     let token = match token {
         Some(t) => t,
-        None => return Some(unauthorized_response()),
+        None => return Err(unauthorized_response()),
     };
 
     if let Some(ref req_pass) = state.config.requirepass {
         if token == *req_pass {
-            return None;
+            return Ok("default".to_string());
         }
     }
 
-    use sha2::{Digest, Sha256};
-    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
-    let users = state.acl_users.lock().await;
-    for user in users.values() {
-        if user.enabled && user.passwords.contains(&hash) {
-            return None;
-        }
+    match acl::http_authenticate(&token) {
+        Some(user) => Ok(user),
+        None => Err(unauthorized_response()),
     }
-
-    Some(unauthorized_response())
 }
 
 fn unauthorized_response() -> Response<Full<Bytes>> {
@@ -278,8 +280,16 @@ async fn handle_metrics(state: &SharedState) -> Result<Response<Full<Bytes>>, Bo
 
 async fn handle_get_key(
     state: &SharedState,
+    user: &str,
     key: &str,
 ) -> Result<Response<Full<Bytes>>, BoxError> {
+    use crate::command::acl;
+    if !acl::is_command_allowed(user, "GET") {
+        return forbidden_response("this user has no permissions to run the 'get' command");
+    }
+    if !acl::is_key_allowed(user, key) {
+        return forbidden_response("this user has no permissions to access one of the keys used as arguments");
+    }
     let key_bytes = Bytes::from(key.to_string());
     let mut store = state.store.lock().await;
     let db = store.db_mut(0);
@@ -309,9 +319,17 @@ async fn handle_get_key(
 
 async fn handle_put_key(
     state: &SharedState,
+    user: &str,
     key: &str,
     body: &[u8],
 ) -> Result<Response<Full<Bytes>>, BoxError> {
+    use crate::command::acl;
+    if !acl::is_command_allowed(user, "SET") {
+        return forbidden_response("this user has no permissions to run the 'set' command");
+    }
+    if !acl::is_key_allowed(user, key) {
+        return forbidden_response("this user has no permissions to access one of the keys used as arguments");
+    }
     let key_bytes = Bytes::from(key.to_string());
     let value = Bytes::from(body.to_vec());
     let mut store = state.store.lock().await;
@@ -324,8 +342,16 @@ async fn handle_put_key(
 
 async fn handle_delete_key(
     state: &SharedState,
+    user: &str,
     key: &str,
 ) -> Result<Response<Full<Bytes>>, BoxError> {
+    use crate::command::acl;
+    if !acl::is_command_allowed(user, "DEL") {
+        return forbidden_response("this user has no permissions to run the 'del' command");
+    }
+    if !acl::is_key_allowed(user, key) {
+        return forbidden_response("this user has no permissions to access one of the keys used as arguments");
+    }
     let key_bytes = Bytes::from(key.to_string());
     let mut store = state.store.lock().await;
     let db = store.db_mut(0);
@@ -337,6 +363,7 @@ async fn handle_delete_key(
 
 async fn handle_command(
     state: &SharedState,
+    user: &str,
     body: &[u8],
 ) -> Result<Response<Full<Bytes>>, BoxError> {
     let parsed: Value = match serde_json::from_slice(body) {
@@ -375,6 +402,27 @@ async fn handle_command(
             StatusCode::BAD_REQUEST,
             &json!({"error": "empty command"}),
         );
+    }
+
+    // Enforce the same ACL command/key gating the RESP path applies, so the
+    // HTTP command endpoint cannot bypass a user's restrictions.
+    {
+        use crate::command::acl;
+        let cmd_name = String::from_utf8_lossy(&args[0]).to_uppercase();
+        if !acl::is_command_allowed(user, &cmd_name) {
+            return forbidden_response(&format!(
+                "this user has no permissions to run the '{}' command",
+                cmd_name.to_lowercase()
+            ));
+        }
+        if args.len() > 1 && !acl::user_has_all_keys(user) {
+            let key_str = String::from_utf8_lossy(&args[1]);
+            if !acl::is_key_allowed(user, &key_str) {
+                return forbidden_response(
+                    "this user has no permissions to access one of the keys used as arguments",
+                );
+            }
+        }
     }
 
     let mut store = state.store.lock().await;
@@ -420,7 +468,7 @@ fn resp_object_to_json(obj: &crate::storage::RedisObject) -> Value {
             let members: Vec<Value> = z
                 .scores
                 .iter()
-                .map(|(k, _)| {
+                .map(|k| {
                     json!({
                         "member": String::from_utf8_lossy(&k.member).to_string(),
                         "score": k.score,

@@ -7,6 +7,13 @@ use std::time::{Instant, Duration};
 use crate::storage::Store;
 use crate::storage::types::RedisObject;
 
+/// Maximum multibulk element count accepted from an AOF entry (mirrors the
+/// RESP parser's limit). Guards replay of a tampered/corrupt AOF against
+/// allocation-based DoS.
+const AOF_MAX_MULTIBULK: usize = 1_048_576;
+/// Maximum bulk-argument length accepted from an AOF entry (512 MB).
+const AOF_MAX_BULK: usize = 512 * 1024 * 1024;
+
 /// Append-Only File writer.
 pub struct AofWriter {
     path: PathBuf,
@@ -502,7 +509,16 @@ fn read_resp_command(reader: &mut BufReader<File>) -> io::Result<Option<Vec<Byte
         Err(_) => return Ok(Some(vec![])),
     };
 
-    let mut args = Vec::with_capacity(count);
+    // Bound the multibulk count from a possibly-tampered AOF so a huge `*N`
+    // header can't force a giant reservation (OOM / capacity-overflow panic).
+    if count > AOF_MAX_MULTIBULK {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "AOF multibulk count exceeds limit",
+        ));
+    }
+
+    let mut args = Vec::with_capacity(count.min(1024));
     for _ in 0..count {
         // Read $N\r\n
         let mut size_line = String::new();
@@ -517,6 +533,15 @@ fn read_resp_command(reader: &mut BufReader<File>) -> io::Result<Option<Vec<Byte
             Ok(s) => s,
             Err(_) => continue,
         };
+
+        // Bound the bulk length so a huge `$N` header can't pre-allocate
+        // gigabytes before any data is read (and `size + 2` can't overflow).
+        if size > AOF_MAX_BULK {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "AOF bulk length exceeds limit",
+            ));
+        }
 
         // Read exactly `size` bytes + \r\n
         let mut buf = vec![0u8; size + 2];

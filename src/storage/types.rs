@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 
 /// Internal Redis data types.
@@ -133,10 +133,10 @@ fn estimate_json_size(v: &serde_json::Value) -> usize {
 #[derive(Debug, Clone)]
 pub struct SortedSetData {
     pub members: HashMap<Bytes, f64>,
-    pub scores: BTreeMap<ScoreKey, Bytes>,
+    pub scores: BTreeSet<ScoreKey>,
 }
 
-/// A key for the score-ordered BTreeMap: (score, member) for unique ordering.
+/// A key for the score-ordered BTreeSet: (score, member) for unique ordering.
 #[derive(Debug, Clone)]
 pub struct ScoreKey {
     pub score: f64,
@@ -169,19 +169,18 @@ impl SortedSetData {
     pub fn new() -> Self {
         Self {
             members: HashMap::new(),
-            scores: BTreeMap::new(),
+            scores: BTreeSet::new(),
         }
     }
 
     /// Add or update a member. Returns true if the member was newly inserted.
     pub fn insert(&mut self, member: Bytes, score: f64) -> bool {
         if let Some(old_score) = self.members.insert(member.clone(), score) {
-            // Remove old score entry
             self.scores.remove(&ScoreKey { score: old_score, member: member.clone() });
-            self.scores.insert(ScoreKey { score, member }, Bytes::new());
+            self.scores.insert(ScoreKey { score, member });
             false
         } else {
-            self.scores.insert(ScoreKey { score, member }, Bytes::new());
+            self.scores.insert(ScoreKey { score, member });
             true
         }
     }
@@ -233,7 +232,7 @@ impl SortedSetData {
         self.scores.iter()
             .skip(start)
             .take(stop - start + 1)
-            .map(|(k, _)| (k.member.clone(), k.score))
+            .map(|k| (k.member.clone(), k.score))
             .collect()
     }
 
@@ -254,13 +253,13 @@ impl SortedSetData {
         };
 
         self.scores.range((min_bound, max_bound))
-            .take_while(|(k, _)| {
+            .take_while(|k| {
                 if max_inclusive { k.score <= max } else { k.score < max }
             })
-            .filter(|(k, _)| {
-                if min_inclusive { k.score >= min } else { k.score > min }
+            .filter_map(|k| {
+                let in_min = if min_inclusive { k.score >= min } else { k.score > min };
+                if in_min { Some((k.member.clone(), k.score)) } else { None }
             })
-            .map(|(k, _)| (k.member.clone(), k.score))
             .collect()
     }
 
@@ -271,7 +270,7 @@ impl SortedSetData {
 
     /// Pop the member with the minimum score.
     pub fn pop_min(&mut self) -> Option<(Bytes, f64)> {
-        let key = self.scores.keys().next()?.clone();
+        let key = self.scores.iter().next()?.clone();
         self.scores.remove(&key);
         self.members.remove(&key.member);
         Some((key.member, key.score))
@@ -279,7 +278,7 @@ impl SortedSetData {
 
     /// Pop the member with the maximum score.
     pub fn pop_max(&mut self) -> Option<(Bytes, f64)> {
-        let key = self.scores.keys().next_back()?.clone();
+        let key = self.scores.iter().next_back()?.clone();
         self.scores.remove(&key);
         self.members.remove(&key.member);
         Some((key.member, key.score))

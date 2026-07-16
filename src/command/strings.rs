@@ -71,8 +71,8 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                 if i >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                let secs: u64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) if v > 0 => v,
+                let secs = match super::parse::u64_(&ctx.args[i]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
                 ex = Some(Duration::from_secs(secs));
@@ -82,8 +82,8 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                 if i >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                let ms: u64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) if v > 0 => v,
+                let ms = match super::parse::u64_(&ctx.args[i]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
                 ex = Some(Duration::from_millis(ms));
@@ -93,8 +93,8 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                 if i >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                let ts: u64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) if v > 0 => v,
+                let ts = match super::parse::u64_(&ctx.args[i]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
@@ -108,8 +108,8 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                 if i >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                let ts_ms: u64 = match String::from_utf8_lossy(&ctx.args[i]).parse() {
-                    Ok(v) if v > 0 => v,
+                let ts_ms = match super::parse::u64_(&ctx.args[i]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
                 let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
@@ -188,8 +188,8 @@ pub fn cmd_setnx(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_setex(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let secs: u64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) if v > 0 => v,
+    let secs = match super::parse::u64_(&ctx.args[2]) {
+        Some(v) if v > 0 => v,
         _ => return RespValue::error("ERR invalid expire time in 'setex' command"),
     };
     let value = ctx.args[3].clone();
@@ -201,8 +201,8 @@ pub fn cmd_setex(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_psetex(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let ms: u64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) if v > 0 => v,
+    let ms = match super::parse::u64_(&ctx.args[2]) {
+        Some(v) if v > 0 => v,
         _ => return RespValue::error("ERR invalid expire time in 'psetex' command"),
     };
     let value = ctx.args[3].clone();
@@ -213,11 +213,14 @@ pub fn cmd_psetex(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_mget(ctx: &mut CommandContext) -> RespValue {
-    let keys: Vec<Bytes> = ctx.args[1..].to_vec();
-    let mut results = Vec::with_capacity(keys.len());
-    for key in &keys {
+    let n = ctx.args.len();
+    let mut results = Vec::with_capacity(n.saturating_sub(1));
+    let mut idx = 1;
+    while idx < n {
+        let key = ctx.args[idx].clone();
+        idx += 1;
         let db = ctx.db();
-        match db.get(key) {
+        match db.get(&key) {
             Some(RedisObject::String(b)) => results.push(RespValue::bulk_string(b.clone())),
             _ => results.push(RespValue::Null),
         }
@@ -386,13 +389,13 @@ pub fn cmd_strlen(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_getrange(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let start = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let end: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let end = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let db = ctx.db();
@@ -404,8 +407,9 @@ pub fn cmd_getrange(ctx: &mut CommandContext) -> RespValue {
             if s > e || s >= b.len() {
                 return RespValue::bulk_string(Bytes::new());
             }
-            let slice = &b[s..=e.min(b.len() - 1)];
-            RespValue::bulk_string(Bytes::from(slice.to_vec()))
+            // Zero-copy slice — Bytes::slice shares the underlying buffer via
+            // refcount instead of allocating a new Vec.
+            RespValue::bulk_string(b.slice(s..=e.min(b.len() - 1)))
         }
         Some(_) => RespValue::wrong_type(),
         None => RespValue::bulk_string(Bytes::new()),
@@ -414,11 +418,24 @@ pub fn cmd_getrange(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_setrange(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let offset: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let offset = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     let value = ctx.args[3].clone();
+
+    // Cap the resulting length at Redis's 512 MB string limit to prevent an
+    // attacker-controlled offset from forcing a huge allocation, and to avoid
+    // usize overflow in `offset + value.len()`.
+    const MAX_STRING_BYTES: usize = 512 * 1024 * 1024;
+    let needed = match offset.checked_add(value.len()) {
+        Some(n) if n <= MAX_STRING_BYTES => n,
+        _ => {
+            return RespValue::error(
+                "ERR string exceeds maximum allowed size (proto-max-bulk-len)",
+            )
+        }
+    };
 
     let db = ctx.db();
     let mut existing = match db.get(&key) {
@@ -427,7 +444,6 @@ pub fn cmd_setrange(ctx: &mut CommandContext) -> RespValue {
         None => Vec::new(),
     };
 
-    let needed = offset + value.len();
     if needed > existing.len() {
         existing.resize(needed, 0);
     }
@@ -467,24 +483,24 @@ pub fn cmd_getex(ctx: &mut CommandContext) -> RespValue {
         match opt.as_str() {
             "EX" => {
                 if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
-                let secs: u64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-                    Ok(v) if v > 0 => v,
+                let secs = match super::parse::u64_(&ctx.args[3]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
                 ctx.db().set_expire(&key, Instant::now() + Duration::from_secs(secs));
             }
             "PX" => {
                 if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
-                let ms: u64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-                    Ok(v) if v > 0 => v,
+                let ms = match super::parse::u64_(&ctx.args[3]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
                 ctx.db().set_expire(&key, Instant::now() + Duration::from_millis(ms));
             }
             "EXAT" => {
                 if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
-                let ts: u64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-                    Ok(v) if v > 0 => v,
+                let ts = match super::parse::u64_(&ctx.args[3]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
@@ -497,8 +513,8 @@ pub fn cmd_getex(ctx: &mut CommandContext) -> RespValue {
             }
             "PXAT" => {
                 if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
-                let ts_ms: u64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-                    Ok(v) if v > 0 => v,
+                let ts_ms = match super::parse::u64_(&ctx.args[3]) {
+                    Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
                 let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;

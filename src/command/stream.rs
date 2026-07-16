@@ -448,14 +448,10 @@ pub fn cmd_xrange(ctx: &mut CommandContext) -> RespValue {
     if ctx.args.len() >= 6 {
         let opt = String::from_utf8_lossy(&ctx.args[4]).to_uppercase();
         if opt == "COUNT" {
-            count = Some(
-                match String::from_utf8_lossy(&ctx.args[5]).parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return RespValue::error("ERR value is not an integer or out of range")
-                    }
-                },
-            );
+            count = Some(match super::parse::usize_(&ctx.args[5]) {
+                Some(v) => v,
+                None => return RespValue::error("ERR value is not an integer or out of range"),
+            });
         }
     }
 
@@ -502,14 +498,10 @@ pub fn cmd_xrevrange(ctx: &mut CommandContext) -> RespValue {
     if ctx.args.len() >= 6 {
         let opt = String::from_utf8_lossy(&ctx.args[4]).to_uppercase();
         if opt == "COUNT" {
-            count = Some(
-                match String::from_utf8_lossy(&ctx.args[5]).parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return RespValue::error("ERR value is not an integer or out of range")
-                    }
-                },
-            );
+            count = Some(match super::parse::usize_(&ctx.args[5]) {
+                Some(v) => v,
+                None => return RespValue::error("ERR value is not an integer or out of range"),
+            });
         }
     }
 
@@ -612,16 +604,12 @@ pub fn cmd_xread(ctx: &mut CommandContext) -> RespValue {
                 if idx >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                count = Some(
-                    match String::from_utf8_lossy(&ctx.args[idx]).parse() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return RespValue::error(
-                                "ERR value is not an integer or out of range",
-                            )
-                        }
-                    },
-                );
+                count = Some(match super::parse::usize_(&ctx.args[idx]) {
+                    Some(v) => v,
+                    None => {
+                        return RespValue::error("ERR value is not an integer or out of range")
+                    }
+                });
                 idx += 1;
             }
             "BLOCK" => {
@@ -1107,16 +1095,12 @@ pub fn cmd_xreadgroup(ctx: &mut CommandContext) -> RespValue {
                 if idx >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                count = Some(
-                    match String::from_utf8_lossy(&ctx.args[idx]).parse() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return RespValue::error(
-                                "ERR value is not an integer or out of range",
-                            )
-                        }
-                    },
-                );
+                count = Some(match super::parse::usize_(&ctx.args[idx]) {
+                    Some(v) => v,
+                    None => {
+                        return RespValue::error("ERR value is not an integer or out of range")
+                    }
+                });
                 idx += 1;
             }
             "BLOCK" => {
@@ -1372,16 +1356,12 @@ pub fn cmd_xpending(ctx: &mut CommandContext) -> RespValue {
                 if idx >= args_len {
                     return RespValue::error("ERR syntax error");
                 }
-                min_idle_val = Some(
-                    match String::from_utf8_lossy(&ctx.args[idx]).parse() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            return RespValue::error(
-                                "ERR value is not an integer or out of range",
-                            )
-                        }
-                    },
-                );
+                min_idle_val = Some(match super::parse::u64_(&ctx.args[idx]) {
+                    Some(v) => v,
+                    None => {
+                        return RespValue::error("ERR value is not an integer or out of range")
+                    }
+                });
                 idx += 1;
             }
         }
@@ -1392,9 +1372,9 @@ pub fn cmd_xpending(ctx: &mut CommandContext) -> RespValue {
 
         let s_str = String::from_utf8_lossy(&ctx.args[idx]).to_string();
         let e_str = String::from_utf8_lossy(&ctx.args[idx + 1]).to_string();
-        let cnt: usize = match String::from_utf8_lossy(&ctx.args[idx + 2]).parse() {
-            Ok(v) => v,
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        let cnt = match super::parse::usize_(&ctx.args[idx + 2]) {
+            Some(v) => v,
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         };
         idx += 3;
 
@@ -1522,9 +1502,9 @@ pub fn cmd_xclaim(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let group_name = ctx.args[2].clone();
     let consumer_name = ctx.args[3].clone();
-    let min_idle_time: u64 = match String::from_utf8_lossy(&ctx.args[4]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let min_idle_time = match super::parse::u64_(&ctx.args[4]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let mut ids: Vec<StreamId> = Vec::new();
@@ -1616,9 +1596,9 @@ pub fn cmd_xautoclaim(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let group_name = ctx.args[2].clone();
     let consumer_name = ctx.args[3].clone();
-    let min_idle_time: u64 = match String::from_utf8_lossy(&ctx.args[4]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let min_idle_time = match super::parse::u64_(&ctx.args[4]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     let start_str = String::from_utf8_lossy(&ctx.args[5]).to_string();
     let start = match parse_stream_id_for_range_start(&start_str) {
@@ -1630,11 +1610,9 @@ pub fn cmd_xautoclaim(ctx: &mut CommandContext) -> RespValue {
     if ctx.args.len() >= 8 {
         let opt = String::from_utf8_lossy(&ctx.args[6]).to_uppercase();
         if opt == "COUNT" {
-            count = match String::from_utf8_lossy(&ctx.args[7]).parse() {
-                Ok(v) => v,
-                Err(_) => {
-                    return RespValue::error("ERR value is not an integer or out of range")
-                }
+            count = match super::parse::usize_(&ctx.args[7]) {
+                Some(v) => v,
+                None => return RespValue::error("ERR value is not an integer or out of range"),
             };
         }
     }

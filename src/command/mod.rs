@@ -1,4 +1,5 @@
 mod registry;
+mod parse;
 mod strings;
 mod keys;
 pub(crate) mod server_cmds;
@@ -13,7 +14,7 @@ mod bitmap;
 mod hyperloglog;
 mod geo;
 mod persistence_cmds;
-mod acl;
+pub(crate) mod acl;
 mod scripting;
 mod replication;
 mod stream;

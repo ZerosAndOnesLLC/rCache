@@ -184,9 +184,9 @@ pub fn cmd_hgetall(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_hincrby(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let field = ctx.args[2].clone();
-    let delta: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let delta = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let hash = match ensure_hash(ctx, &key) {
@@ -216,9 +216,9 @@ pub fn cmd_hincrby(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_hincrbyfloat(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let field = ctx.args[2].clone();
-    let delta: f64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not a valid float"),
+    let delta = match super::parse::float(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not a valid float"),
     };
 
     let hash = match ensure_hash(ctx, &key) {
@@ -265,9 +265,9 @@ pub fn cmd_hstrlen(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count = if ctx.args.len() > 2 {
-        match String::from_utf8_lossy(&ctx.args[2]).parse::<i64>() {
-            Ok(v) => Some(v),
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::int(&ctx.args[2]) {
+            Some(v) => Some(v),
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         None

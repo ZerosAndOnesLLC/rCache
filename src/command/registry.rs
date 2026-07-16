@@ -69,10 +69,12 @@ impl CommandRegistry {
         (entry.handler)(ctx)
     }
 
+    #[allow(dead_code)] // public registry introspection API
     pub fn command_count(&self) -> usize {
         self.commands.len()
     }
 
+    #[allow(dead_code)] // public registry introspection API
     pub fn command_names(&self) -> Vec<String> {
         self.commands.keys().cloned().collect()
     }

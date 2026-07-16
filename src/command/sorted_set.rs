@@ -203,9 +203,9 @@ pub fn cmd_zmscore(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_zincrby(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let delta: f64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not a valid float"),
+    let delta = match super::parse::float(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not a valid float"),
     };
     let member = ctx.args[3].clone();
 
@@ -373,13 +373,13 @@ pub fn cmd_zrangebyscore(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_zrevrange(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let start = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let stop: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let stop = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let withscores = ctx.args.len() > 4 && String::from_utf8_lossy(&ctx.args[4]).to_uppercase() == "WITHSCORES";
@@ -480,9 +480,9 @@ pub fn cmd_zrevrank(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_zpopmin(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count: usize = if ctx.args.len() > 2 {
-        match String::from_utf8_lossy(&ctx.args[2]).parse() {
-            Ok(v) => v,
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::usize_(&ctx.args[2]) {
+            Some(v) => v,
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         1
@@ -511,9 +511,9 @@ pub fn cmd_zpopmin(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_zpopmax(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let count: usize = if ctx.args.len() > 2 {
-        match String::from_utf8_lossy(&ctx.args[2]).parse() {
-            Ok(v) => v,
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        match super::parse::usize_(&ctx.args[2]) {
+            Some(v) => v,
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         }
     } else {
         1
@@ -626,9 +626,9 @@ enum SetOp { Union, Inter, Diff }
 
 fn zstore_op(ctx: &mut CommandContext, op: SetOp) -> RespValue {
     let dest = ctx.args[1].clone();
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 3 + numkeys {
@@ -891,9 +891,9 @@ pub fn cmd_zdiff(ctx: &mut CommandContext) -> RespValue {
 }
 
 fn zset_op(ctx: &mut CommandContext, op: SetOp, _store: bool) -> RespValue {
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 2 + numkeys {
@@ -994,9 +994,9 @@ fn zset_op(ctx: &mut CommandContext, op: SetOp, _store: bool) -> RespValue {
 }
 
 pub fn cmd_zintercard(ctx: &mut CommandContext) -> RespValue {
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 2 + numkeys {
@@ -1046,9 +1046,9 @@ pub fn cmd_zintercard(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_zmpop(ctx: &mut CommandContext) -> RespValue {
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[1]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[1]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 2 + numkeys + 1 {
@@ -1163,9 +1163,9 @@ pub fn cmd_bzmpop(ctx: &mut CommandContext) -> RespValue {
         return RespValue::wrong_arity("bzmpop");
     }
 
-    let numkeys: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let numkeys = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if ctx.args.len() < 3 + numkeys + 1 {
@@ -1344,13 +1344,13 @@ pub fn cmd_zremrangebylex(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_zremrangebyrank(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let start = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let stop: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let stop = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     match get_zset(ctx, &key) {

@@ -429,6 +429,137 @@ struct AclUserEntry {
     no_pass: bool,
 }
 
+impl AclUserEntry {
+    /// Whether this user may run `cmd` (case-insensitive).
+    fn is_command_allowed(&self, cmd: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        let cmd_upper = cmd.to_uppercase();
+        if self.denied_commands.contains(&cmd_upper) {
+            return false;
+        }
+        if self.all_commands {
+            return true;
+        }
+        self.allowed_commands.contains(&cmd_upper)
+    }
+
+    /// Whether this user may access `key` under its key patterns.
+    fn is_key_allowed(&self, key: &str) -> bool {
+        if self.all_keys {
+            return true;
+        }
+        self.key_patterns
+            .iter()
+            .any(|pat| crate::storage::db::glob_match(pat, key))
+    }
+}
+
+/// Result of authenticating a username/password against the ACL registry.
+pub enum AuthOutcome {
+    Ok,
+    WrongPass,
+    Disabled,
+    NoUser,
+}
+
+/// Apply the server-level `requirepass` to the default user at startup so the
+/// enforcement path (which reads this same registry) requires it. This makes the
+/// ACL registry the single source of truth for authentication and authorization.
+pub fn init_default_password(requirepass: Option<&str>) {
+    if let (Some(pass), Ok(mut users)) = (requirepass, ACL_USERS.lock()) {
+        if let Some(def) = users.get_mut("default") {
+            use sha2::{Digest, Sha256};
+            let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
+            if !def.passwords.contains(&hash) {
+                def.passwords.push(hash);
+            }
+            def.no_pass = false;
+        }
+    }
+}
+
+/// Authenticate a username/password pair against the ACL registry.
+pub fn check_password(username: &str, password: &str) -> AuthOutcome {
+    match ACL_USERS.lock() {
+        Ok(users) => match users.get(username) {
+            Some(u) => {
+                if !u.enabled {
+                    return AuthOutcome::Disabled;
+                }
+                if u.no_pass {
+                    return AuthOutcome::Ok;
+                }
+                use sha2::{Digest, Sha256};
+                let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
+                if u.passwords.contains(&hash) {
+                    AuthOutcome::Ok
+                } else {
+                    AuthOutcome::WrongPass
+                }
+            }
+            None => AuthOutcome::NoUser,
+        },
+        Err(_) => AuthOutcome::WrongPass,
+    }
+}
+
+/// Whether `username` may run `cmd`. Unknown users are not blocked here (the
+/// connection layer gates unauthenticated access separately); the `default`
+/// user always exists.
+pub fn is_command_allowed(username: &str, cmd: &str) -> bool {
+    match ACL_USERS.lock() {
+        Ok(users) => match users.get(username) {
+            Some(u) => u.is_command_allowed(cmd),
+            None => true,
+        },
+        Err(_) => false,
+    }
+}
+
+/// Whether `username` may access `key`.
+pub fn is_key_allowed(username: &str, key: &str) -> bool {
+    match ACL_USERS.lock() {
+        Ok(users) => match users.get(username) {
+            Some(u) => u.is_key_allowed(key),
+            None => true,
+        },
+        Err(_) => false,
+    }
+}
+
+/// Whether `username`'s key patterns cover every key (no per-key check needed).
+pub fn user_has_all_keys(username: &str) -> bool {
+    match ACL_USERS.lock() {
+        Ok(users) => users.get(username).map(|u| u.all_keys).unwrap_or(true),
+        Err(_) => false,
+    }
+}
+
+/// Whether any enabled user requires a password (used to decide if the HTTP
+/// API is open when no `requirepass` is configured).
+pub fn any_password_required() -> bool {
+    match ACL_USERS.lock() {
+        Ok(users) => users
+            .values()
+            .any(|u| u.enabled && !u.no_pass && !u.passwords.is_empty()),
+        Err(_) => true,
+    }
+}
+
+/// Resolve an HTTP bearer token to the enabled ACL user whose password it
+/// matches, if any.
+pub fn http_authenticate(token: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let users = ACL_USERS.lock().ok()?;
+    users
+        .iter()
+        .find(|(_, u)| u.enabled && !u.no_pass && u.passwords.contains(&hash))
+        .map(|(name, _)| name.clone())
+}
+
 static ACL_USERS: std::sync::LazyLock<Mutex<HashMap<String, AclUserEntry>>> =
     std::sync::LazyLock::new(|| {
         let mut users = HashMap::new();

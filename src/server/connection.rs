@@ -13,6 +13,13 @@ use crate::command::CommandContext;
 use crate::storage::db::glob_match;
 use super::SharedState;
 
+/// Maximum size of a connection's unprocessed query buffer. A single bulk
+/// argument may be up to 512 MB (the parser's `MAX_BULK_LEN`), so this ceiling
+/// sits above that to allow one max-size argument while still bounding an
+/// attacker who streams a partial/incomplete frame forever. Mirrors Redis's
+/// client query-buffer cap.
+const MAX_QUERY_BUFFER: usize = 1024 * 1024 * 1024;
+
 /// A stream that may or may not be TLS-wrapped.
 pub enum MaybeTls {
     Plain(TcpStream),
@@ -84,9 +91,12 @@ pub struct Connection {
     tracking_enabled: bool,
     tracked_keys: HashSet<Bytes>,
     tracking_tx: Option<mpsc::UnboundedSender<RespValue>>,
+    #[allow(dead_code)] // receiver kept on Connection for future tracking-channel reads
     tracking_rx: Option<mpsc::UnboundedReceiver<RespValue>>,
     // Multi-tenancy namespace
     namespace: Option<String>,
+    // AUTH brute-force protection: count consecutive failures, reset on success.
+    auth_failures: u32,
 }
 
 impl Connection {
@@ -116,6 +126,7 @@ impl Connection {
             tracked_keys: HashSet::new(),
             tracking_tx: Some(tracking_tx),
             tracking_rx: Some(tracking_rx),
+            auth_failures: 0,
             namespace: None,
         }
     }
@@ -133,6 +144,12 @@ impl Connection {
                         self.pubsub_rx = Some(pubsub_rx);
                         let n = result?;
                         if n == 0 {
+                            self.cleanup_pubsub().await;
+                            return Ok(());
+                        }
+                        if self.buffer.len() > MAX_QUERY_BUFFER {
+                            let err = RespValue::error("ERR Protocol error: unbalanced/too-large query buffer");
+                            let _ = self.stream.write_all(&err.serialize()).await;
                             self.cleanup_pubsub().await;
                             return Ok(());
                         }
@@ -166,6 +183,12 @@ impl Connection {
                 // Read more data from the socket
                 let n = self.stream.read_buf(&mut self.buffer).await?;
                 if n == 0 {
+                    self.cleanup_pubsub().await;
+                    return Ok(());
+                }
+                if self.buffer.len() > MAX_QUERY_BUFFER {
+                    let err = RespValue::error("ERR Protocol error: unbalanced/too-large query buffer");
+                    let _ = self.stream.write_all(&err.serialize()).await;
                     self.cleanup_pubsub().await;
                     return Ok(());
                 }
@@ -208,8 +231,14 @@ impl Connection {
                 let elapsed_us = start.elapsed().as_micros() as u64;
                 let response = self.convert_to_resp3(response);
 
-                // Record latency stats
-                {
+                // Record latency stats. Skip on auth-related rejections so an
+                // unauthenticated probe can't populate command-name histograms
+                // visible via INFO commandstats / LATENCY HISTORY.
+                let auth_rejected = matches!(
+                    &response,
+                    RespValue::Error(e) if e.starts_with("NOAUTH") || e.starts_with("WRONGPASS")
+                );
+                if !auth_rejected {
                     let mut stats = self.state.latency_stats.lock().await;
                     let entry = stats.entry(cmd_name.to_string()).or_default();
                     entry.count += 1;
@@ -301,7 +330,7 @@ impl Connection {
 
         // Handle AUTH
         if cmd_name == "AUTH" {
-            return self.handle_auth(&args);
+            return self.handle_auth(&args).await;
         }
 
         // Check authentication
@@ -312,25 +341,25 @@ impl Connection {
             }
         }
 
-        // ACL check: verify user is allowed to execute this command
+        // ACL check: verify user is allowed to execute this command. This reads
+        // the shared ACL registry that `ACL SETUSER` mutates, so runtime rule
+        // changes are enforced.
         {
-            let acl_users = self.state.acl_users.lock().await;
-            if let Some(user) = acl_users.get(&self.auth_username) {
-                if !user.is_command_allowed(&cmd_name) {
-                    return RespValue::error(format!(
-                        "NOPERM this user has no permissions to run the '{}' command",
-                        cmd_name.to_lowercase()
-                    ));
-                }
-                // Check key patterns for commands that have keys
-                if args.len() > 1 && !user.all_keys {
-                    let key_str = String::from_utf8_lossy(&args[1]);
-                    if !user.is_key_allowed(&key_str) {
-                        return RespValue::error(
-                            "NOPERM this user has no permissions to access one of the keys used as arguments"
-                                .to_string(),
-                        );
-                    }
+            use crate::command::acl;
+            if !acl::is_command_allowed(&self.auth_username, &cmd_name) {
+                return RespValue::error(format!(
+                    "NOPERM this user has no permissions to run the '{}' command",
+                    cmd_name.to_lowercase()
+                ));
+            }
+            // Check key patterns for commands that have keys
+            if args.len() > 1 && !acl::user_has_all_keys(&self.auth_username) {
+                let key_str = String::from_utf8_lossy(&args[1]);
+                if !acl::is_key_allowed(&self.auth_username, &key_str) {
+                    return RespValue::error(
+                        "NOPERM this user has no permissions to access one of the keys used as arguments"
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -482,7 +511,7 @@ impl Connection {
                         if i + 2 >= args.len() {
                             return RespValue::error("ERR syntax error");
                         }
-                        let auth_result = self.handle_auth_hello(&args[i + 1], &args[i + 2]);
+                        let auth_result = self.handle_auth_hello(&args[i + 1], &args[i + 2]).await;
                         if let Some(err) = auth_result {
                             return err;
                         }
@@ -546,12 +575,17 @@ impl Connection {
 
         // Check memory eviction before write commands
         if is_write {
-            let maxmemory = self.state.config.maxmemory;
-            let policy = self.state.config.maxmemory_policy.clone();
-            let samples = self.state.config.maxmemory_samples;
-            let lfu_log_factor = self.state.config.lfu_log_factor;
-            let lfu_decay_time = self.state.config.lfu_decay_time;
-            if store.check_memory_limit(maxmemory, &policy, samples, lfu_log_factor, lfu_decay_time).is_err() {
+            let cfg = &self.state.config;
+            if store
+                .check_memory_limit(
+                    cfg.maxmemory,
+                    &cfg.maxmemory_policy,
+                    cfg.maxmemory_samples,
+                    cfg.lfu_log_factor,
+                    cfg.lfu_decay_time,
+                )
+                .is_err()
+            {
                 return RespValue::error("OOM command not allowed when used memory > 'maxmemory'.");
             }
         }
@@ -763,7 +797,30 @@ impl Connection {
         }
     }
 
-    fn handle_auth(&mut self, args: &[Bytes]) -> RespValue {
+    /// After `BACKOFF_AFTER` consecutive failed AUTH/HELLO attempts on this
+    /// connection, sleep before returning the failure response. Doubles each
+    /// time, capped at 5 s. Resets to zero on a successful auth.
+    async fn auth_backoff(&mut self) {
+        const BACKOFF_AFTER: u32 = 5;
+        const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
+
+        self.auth_failures = self.auth_failures.saturating_add(1);
+        if self.auth_failures <= BACKOFF_AFTER {
+            return;
+        }
+        let over = self.auth_failures - BACKOFF_AFTER;
+        let ms: u64 = 100u64.saturating_mul(1u64 << over.min(10));
+        let delay = std::time::Duration::from_millis(ms).min(MAX_BACKOFF);
+        tokio::time::sleep(delay).await;
+    }
+
+    fn auth_success(&mut self, username: String) {
+        self.authenticated = true;
+        self.auth_username = username;
+        self.auth_failures = 0;
+    }
+
+    async fn handle_auth(&mut self, args: &[Bytes]) -> RespValue {
         if args.len() < 2 {
             return RespValue::wrong_arity("auth");
         }
@@ -777,14 +834,10 @@ impl Connection {
             ("default".to_string(), String::from_utf8_lossy(&args[1]).to_string())
         };
 
-        // Try ACL-based authentication first
-        // We can't await here (sync fn), so check against config requirepass as fallback
-        // For the default user with requirepass, check directly
         if username == "default" {
             if let Some(ref req_pass) = self.state.config.requirepass {
                 if password == *req_pass {
-                    self.authenticated = true;
-                    self.auth_username = username;
+                    self.auth_success(username);
                     return RespValue::ok();
                 }
             } else {
@@ -792,67 +845,41 @@ impl Connection {
             }
         }
 
-        // For ACL users, check hashed password
-        // Note: we need to use try_lock since this is a sync function
-        if let Ok(acl_users) = self.state.acl_users.try_lock() {
-            if let Some(user) = acl_users.get(&username) {
-                if !user.enabled {
-                    return RespValue::error("WRONGPASS invalid username-password pair or user is disabled.");
-                }
-                if user.no_pass {
-                    self.authenticated = true;
-                    self.auth_username = username;
-                    return RespValue::ok();
-                }
-                // Hash the provided password and compare
-                use sha2::{Sha256, Digest};
-                let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
-                if user.passwords.contains(&hash) {
-                    self.authenticated = true;
-                    self.auth_username = username;
-                    return RespValue::ok();
-                }
+        match crate::command::acl::check_password(&username, &password) {
+            crate::command::acl::AuthOutcome::Ok => {
+                self.auth_success(username);
+                RespValue::ok()
+            }
+            _ => {
+                self.auth_backoff().await;
+                RespValue::error("WRONGPASS invalid username-password pair or user is disabled.")
             }
         }
-
-        RespValue::error("WRONGPASS invalid username-password pair or user is disabled.")
     }
 
-    fn handle_auth_hello(&mut self, username: &Bytes, password: &Bytes) -> Option<RespValue> {
+    async fn handle_auth_hello(&mut self, username: &Bytes, password: &Bytes) -> Option<RespValue> {
         let username = String::from_utf8_lossy(username).to_string();
         let password = String::from_utf8_lossy(password).to_string();
 
         if username == "default" {
             if let Some(ref req_pass) = self.state.config.requirepass {
                 if password == *req_pass {
-                    self.authenticated = true;
-                    self.auth_username = username;
+                    self.auth_success(username);
                     return None;
                 }
             }
         }
 
-        if let Ok(acl_users) = self.state.acl_users.try_lock() {
-            if let Some(user) = acl_users.get(&username) {
-                if !user.enabled {
-                    return Some(RespValue::error("WRONGPASS invalid username-password pair or user is disabled."));
-                }
-                if user.no_pass {
-                    self.authenticated = true;
-                    self.auth_username = username;
-                    return None;
-                }
-                use sha2::{Sha256, Digest};
-                let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
-                if user.passwords.contains(&hash) {
-                    self.authenticated = true;
-                    self.auth_username = username;
-                    return None;
-                }
+        match crate::command::acl::check_password(&username, &password) {
+            crate::command::acl::AuthOutcome::Ok => {
+                self.auth_success(username);
+                None
+            }
+            _ => {
+                self.auth_backoff().await;
+                Some(RespValue::error("WRONGPASS invalid username-password pair or user is disabled."))
             }
         }
-
-        Some(RespValue::error("WRONGPASS invalid username-password pair or user is disabled."))
     }
 
     // === Pub/Sub handlers ===
@@ -1006,7 +1033,7 @@ impl Connection {
         }
         let channel = args[1].clone();
         let message = args[2].clone();
-        let pubsub = self.state.pubsub.lock().await;
+        let mut pubsub = self.state.pubsub.lock().await;
         let count = pubsub.publish(&channel, &message);
         RespValue::integer(count)
     }

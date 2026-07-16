@@ -3,6 +3,13 @@ use crate::protocol::RespValue;
 use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
+/// Maximum addressable byte length of a string value (512 MB), matching Redis's
+/// proto-max-bulk-len. Bit offsets that would grow a string past this are
+/// rejected rather than triggering a multi-GB/TB allocation.
+const MAX_STRING_BYTES: usize = 512 * 1024 * 1024;
+/// Maximum bit offset, derived from the byte cap.
+const MAX_BIT_OFFSET: usize = MAX_STRING_BYTES * 8;
+
 fn get_or_create_string(ctx: &mut CommandContext, key: &Bytes) -> Vec<u8> {
     let db = ctx.db();
     match db.get(key) {
@@ -22,9 +29,9 @@ fn check_type(ctx: &mut CommandContext, key: &Bytes) -> Result<(), RespValue> {
 
 pub fn cmd_setbit(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let offset: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR bit offset is not an integer or out of range"),
+    let offset = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) if v < MAX_BIT_OFFSET => v,
+        _ => return RespValue::error("ERR bit offset is not an integer or out of range"),
     };
     let value: u8 = match String::from_utf8_lossy(&ctx.args[3]).parse::<u8>() {
         Ok(v) if v <= 1 => v,
@@ -59,9 +66,9 @@ pub fn cmd_setbit(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_getbit(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let offset: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR bit offset is not an integer or out of range"),
+    let offset = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR bit offset is not an integer or out of range"),
     };
 
     if let Err(e) = check_type(ctx, &key) {
@@ -100,13 +107,13 @@ pub fn cmd_bitcount(ctx: &mut CommandContext) -> RespValue {
         return RespValue::integer(count as i64);
     }
 
-    let start: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let start = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
-    let end: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let end = match super::parse::int(&ctx.args[3]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     let use_bit = ctx.args.len() > 4 &&
@@ -171,14 +178,14 @@ pub fn cmd_bitpos(ctx: &mut CommandContext) -> RespValue {
     let has_end = ctx.args.len() > 4;
 
     let (start_byte, end_byte) = if ctx.args.len() > 3 {
-        let start: i64 = match String::from_utf8_lossy(&ctx.args[3]).parse() {
-            Ok(v) => v,
-            Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+        let start = match super::parse::int(&ctx.args[3]) {
+            Some(v) => v,
+            None => return RespValue::error("ERR value is not an integer or out of range"),
         };
         let end: i64 = if ctx.args.len() > 4 {
-            match String::from_utf8_lossy(&ctx.args[4]).parse() {
-                Ok(v) => v,
-                Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+            match super::parse::int(&ctx.args[4]) {
+                Some(v) => v,
+                None => return RespValue::error("ERR value is not an integer or out of range"),
             }
         } else {
             -1
@@ -344,9 +351,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                     Some(v) => v,
                     None => return RespValue::error("ERR bit offset is not an integer or out of range"),
                 };
-                let value: i64 = match String::from_utf8_lossy(&ctx.args[i + 3]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                let value = match super::parse::int(&ctx.args[i + 3]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
                 i += 4;
 
@@ -369,9 +376,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                     Some(v) => v,
                     None => return RespValue::error("ERR bit offset is not an integer or out of range"),
                 };
-                let increment: i64 = match String::from_utf8_lossy(&ctx.args[i + 3]).parse() {
-                    Ok(v) => v,
-                    Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+                let increment = match super::parse::int(&ctx.args[i + 3]) {
+                    Some(v) => v,
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
                 i += 4;
 
@@ -476,12 +483,18 @@ fn parse_encoding(arg: &Bytes) -> Option<(bool, u32)> {
 
 fn parse_bitfield_offset(arg: &Bytes, bits: u32) -> Option<usize> {
     let s = String::from_utf8_lossy(arg);
-    if let Some(rest) = s.strip_prefix('#') {
+    let offset = if let Some(rest) = s.strip_prefix('#') {
         let idx: usize = rest.parse().ok()?;
-        Some(idx * bits as usize)
+        idx.checked_mul(bits as usize)?
     } else {
-        s.parse().ok()
+        s.parse().ok()?
+    };
+    // Reject offsets that would grow the backing string past the size cap,
+    // preventing multi-GB allocations in read_bits/write_bits.
+    if offset >= MAX_BIT_OFFSET {
+        return None;
     }
+    Some(offset)
 }
 
 fn read_bits(data: &[u8], offset: usize, bits: u32, signed: bool) -> i64 {

@@ -3,6 +3,25 @@ use crate::protocol::RespValue;
 use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
+/// Upper bound on the backing-array size (in bytes) any probabilistic structure
+/// may allocate (256 MB). Client-supplied width/depth/capacity are validated
+/// against this before allocation to prevent multi-GB/TB OOM and integer
+/// overflow in the size arithmetic.
+const MAX_PROB_BYTES: usize = 256 * 1024 * 1024;
+
+/// Validate that a `width x depth` grid of u64 counters stays within
+/// `MAX_PROB_BYTES`, using checked arithmetic. Returns the byte count on success.
+fn checked_counter_bytes(width: u32, depth: u32) -> Option<usize> {
+    let bytes = (width as usize)
+        .checked_mul(depth as usize)?
+        .checked_mul(8)?;
+    if bytes > MAX_PROB_BYTES {
+        None
+    } else {
+        Some(bytes)
+    }
+}
+
 // ============================================================================
 // Bloom Filter
 // ============================================================================
@@ -86,6 +105,7 @@ fn bloom_k(data: &[u8]) -> u32 {
     u32::from_le_bytes(data[16..20].try_into().unwrap())
 }
 
+#[allow(dead_code)] // exposed for future BF.INFO ERROR_RATE
 fn bloom_error_rate(data: &[u8]) -> f64 {
     f64::from_le_bytes(data[20..28].try_into().unwrap())
 }
@@ -456,6 +476,10 @@ pub fn cmd_cms_initbydim(ctx: &mut CommandContext) -> RespValue {
         _ => return RespValue::error("ERR invalid depth"),
     };
 
+    if checked_counter_bytes(width, depth).is_none() {
+        return RespValue::error("ERR CMS dimensions too large");
+    }
+
     let db = ctx.db();
     if db.exists(&key) {
         return RespValue::error("ERR item exists");
@@ -494,8 +518,13 @@ pub fn cmd_cms_initbyprob(ctx: &mut CommandContext) -> RespValue {
     // width = ceil(e / error), depth = ceil(ln(1/probability))
     let width = (std::f64::consts::E / error).ceil() as u32;
     let depth = (1.0_f64 / probability).ln().ceil() as u32;
+    let (width, depth) = (width.max(1), depth.max(1));
 
-    let data = new_cms(width.max(1), depth.max(1));
+    if checked_counter_bytes(width, depth).is_none() {
+        return RespValue::error("ERR CMS dimensions too large");
+    }
+
+    let data = new_cms(width, depth);
     db.set(key, RedisObject::String(Bytes::from(data)));
     RespValue::ok()
 }
@@ -748,6 +777,7 @@ fn topk_num_items(data: &[u8]) -> u32 {
     u32::from_le_bytes(data[24..28].try_into().unwrap())
 }
 
+#[allow(dead_code)] // mutator paired with topk_num_items getter for future use
 fn set_topk_num_items(data: &mut [u8], count: u32) {
     data[24..28].copy_from_slice(&count.to_le_bytes());
 }
@@ -991,8 +1021,16 @@ pub fn cmd_topk_reserve(ctx: &mut CommandContext) -> RespValue {
         (w, d, decay)
     } else {
         // Defaults: width=8*k, depth=7, decay=0.9
-        (8 * k, 7, 0.9)
+        let w = match k.checked_mul(8) {
+            Some(w) => w,
+            None => return RespValue::error("ERR invalid k"),
+        };
+        (w, 7, 0.9)
     };
+
+    if checked_counter_bytes(width, depth).is_none() {
+        return RespValue::error("ERR TopK dimensions too large");
+    }
 
     let db = ctx.db();
     if db.exists(&key) {

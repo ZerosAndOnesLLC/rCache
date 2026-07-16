@@ -77,9 +77,9 @@ fn apply_expire(ctx: &mut CommandContext, key: &Bytes, new_expire: Instant, nx: 
 
 pub fn cmd_expire(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let secs: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let secs = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     if secs < 0 {
         return RespValue::error("ERR invalid expire time in 'expire' command");
@@ -91,9 +91,9 @@ pub fn cmd_expire(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_pexpire(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let ms: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let ms = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     if ms < 0 {
         return RespValue::error("ERR invalid expire time in 'pexpire' command");
@@ -105,9 +105,9 @@ pub fn cmd_pexpire(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_expireat(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let ts: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let ts = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     if ts < 0 {
         return RespValue::error("ERR invalid expire time in 'expireat' command");
@@ -125,9 +125,9 @@ pub fn cmd_expireat(ctx: &mut CommandContext) -> RespValue {
 
 pub fn cmd_pexpireat(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let ts_ms: i64 = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let ts_ms = match super::parse::int(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
     if ts_ms < 0 {
         return RespValue::error("ERR invalid expire time in 'pexpireat' command");
@@ -456,9 +456,9 @@ pub fn cmd_sort(ctx: &mut CommandContext) -> RespValue {
 /// MOVE key db - move a key to another database
 pub fn cmd_move(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
-    let target_db: usize = match String::from_utf8_lossy(&ctx.args[2]).parse() {
-        Ok(v) => v,
-        Err(_) => return RespValue::error("ERR value is not an integer or out of range"),
+    let target_db = match super::parse::usize_(&ctx.args[2]) {
+        Some(v) => v,
+        None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
     if target_db >= ctx.store.db_count() {
