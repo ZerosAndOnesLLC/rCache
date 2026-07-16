@@ -493,7 +493,7 @@ pub fn check_password(username: &str, password: &str) -> AuthOutcome {
                 }
                 use sha2::{Digest, Sha256};
                 let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
-                if u.passwords.contains(&hash) {
+                if u.passwords.iter().any(|p| constant_time_eq(p.as_bytes(), hash.as_bytes())) {
                     AuthOutcome::Ok
                 } else {
                     AuthOutcome::WrongPass
@@ -503,6 +503,30 @@ pub fn check_password(username: &str, password: &str) -> AuthOutcome {
         },
         Err(_) => AuthOutcome::WrongPass,
     }
+}
+
+/// Constant-time byte-slice equality. The length comparison is unavoidable, but
+/// content comparison does not short-circuit on the first differing byte, so it
+/// leaks no per-byte timing signal.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Constant-time verification of a plaintext secret (e.g. `requirepass`) by
+/// comparing fixed-length SHA-256 digests, so neither the secret's length nor a
+/// matching prefix leaks through response timing.
+pub fn verify_secret(provided: &str, expected: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    let a = Sha256::digest(provided.as_bytes());
+    let b = Sha256::digest(expected.as_bytes());
+    constant_time_eq(&a, &b)
 }
 
 /// Whether `username` may run `cmd`. Unknown users are not blocked here (the
@@ -556,7 +580,13 @@ pub fn http_authenticate(token: &str) -> Option<String> {
     let users = ACL_USERS.lock().ok()?;
     users
         .iter()
-        .find(|(_, u)| u.enabled && !u.no_pass && u.passwords.contains(&hash))
+        .find(|(_, u)| {
+            u.enabled
+                && !u.no_pass
+                && u.passwords
+                    .iter()
+                    .any(|p| constant_time_eq(p.as_bytes(), hash.as_bytes()))
+        })
         .map(|(name, _)| name.clone())
 }
 
@@ -579,3 +609,23 @@ static ACL_USERS: std::sync::LazyLock<Mutex<HashMap<String, AclUserEntry>>> =
         );
         Mutex::new(users)
     });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn test_verify_secret() {
+        assert!(verify_secret("hunter2", "hunter2"));
+        assert!(!verify_secret("hunter2", "hunter3"));
+        assert!(!verify_secret("", "x"));
+    }
+}

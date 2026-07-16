@@ -48,7 +48,13 @@ pub async fn run_http_server(state: Arc<SharedState>, port: u16) -> Result<(), B
                 }
             });
 
-            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
+            // Bound how long a client may take to send request headers, so a
+            // slow-loris client cannot hold a connection open indefinitely.
+            let mut builder = http1::Builder::new();
+            builder
+                .timer(hyper_util::rt::TokioTimer::new())
+                .header_read_timeout(std::time::Duration::from_secs(15));
+            if let Err(e) = builder.serve_connection(io, svc).await {
                 tracing::debug!("HTTP connection error: {}", e);
             }
         });
@@ -77,17 +83,21 @@ async fn handle_request(
         (Method::GET, "/info") => handle_info(&state).await,
         (Method::GET, "/metrics") => handle_metrics(&state).await,
         (Method::POST, "/api/v1/command") => {
-            let body = req.collect().await?.to_bytes();
-            handle_command(&state, &user, &body).await
+            match collect_limited(req).await {
+                Ok(body) => handle_command(&state, &user, &body).await,
+                Err(resp) => Ok(resp),
+            }
         }
         (Method::GET, p) if p.starts_with("/api/v1/") => {
             let key = &p["/api/v1/".len()..];
             handle_get_key(&state, &user, key).await
         }
         (Method::PUT, p) if p.starts_with("/api/v1/") => {
-            let key = &p["/api/v1/".len()..];
-            let body = req.collect().await?.to_bytes();
-            handle_put_key(&state, &user, key, &body).await
+            let key = p["/api/v1/".len()..].to_string();
+            match collect_limited(req).await {
+                Ok(body) => handle_put_key(&state, &user, &key, &body).await,
+                Err(resp) => Ok(resp),
+            }
         }
         (Method::DELETE, p) if p.starts_with("/api/v1/") => {
             let key = &p["/api/v1/".len()..];
@@ -140,15 +150,46 @@ async fn check_auth(
     };
 
     if let Some(ref req_pass) = state.config.requirepass {
-        if token == *req_pass {
+        if crate::command::acl::verify_secret(&token, req_pass) {
             return Ok("default".to_string());
         }
     }
 
     match acl::http_authenticate(&token) {
         Some(user) => Ok(user),
-        None => Err(unauthorized_response()),
+        None => {
+            // Fixed delay on a bad credential to slow brute-force attempts. The
+            // HTTP path is stateless per request, so this is a per-attempt cost
+            // rather than a per-connection backoff.
+            tokio::time::sleep(std::time::Duration::from_millis(AUTH_FAIL_DELAY_MS)).await;
+            Err(unauthorized_response())
+        }
     }
+}
+
+/// Maximum request-body size accepted by the HTTP API (64 MB). Bounds
+/// memory used before a handler runs, preventing a body-flood DoS.
+const MAX_HTTP_BODY: usize = 64 * 1024 * 1024;
+/// Delay applied after a failed HTTP auth attempt to slow brute force.
+const AUTH_FAIL_DELAY_MS: u64 = 250;
+
+/// Collect a request body, rejecting anything larger than `MAX_HTTP_BODY`.
+async fn collect_limited(req: Request<Incoming>) -> Result<Bytes, Response<Full<Bytes>>> {
+    use http_body_util::Limited;
+    let limited = Limited::new(req.into_body(), MAX_HTTP_BODY);
+    match limited.collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(_) => Err(payload_too_large_response()),
+    }
+}
+
+fn payload_too_large_response() -> Response<Full<Bytes>> {
+    let body = serde_json::to_vec(&json!({"error": "payload too large"})).unwrap_or_default();
+    Response::builder()
+        .status(StatusCode::PAYLOAD_TOO_LARGE)
+        .header("Content-Type", "application/json")
+        .body(Full::new(Bytes::from(body)))
+        .expect("static response builder")
 }
 
 fn unauthorized_response() -> Response<Full<Bytes>> {

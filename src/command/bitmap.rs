@@ -119,6 +119,12 @@ pub fn cmd_bitcount(ctx: &mut CommandContext) -> RespValue {
     let use_bit = ctx.args.len() > 4 &&
         String::from_utf8_lossy(&ctx.args[4]).to_uppercase() == "BIT";
 
+    // An empty value has no bits/bytes to count. Guard here so the range math
+    // below (`data.len() - 1` / `total_bits - 1`) can't underflow.
+    if data.is_empty() {
+        return RespValue::integer(0);
+    }
+
     if use_bit {
         // BIT mode: start and end are bit offsets
         let total_bits = data.len() * 8;

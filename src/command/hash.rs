@@ -4,6 +4,10 @@ use crate::protocol::RespValue;
 use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
+/// Upper bound on the magnitude of a negative HRANDFIELD `count` (the
+/// with-duplicates form), preventing an unbounded allocation.
+const MAX_RAND_COUNT: u64 = 1_000_000;
+
 fn ensure_hash<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut HashMap<Bytes, Bytes>, RespValue> {
     match ctx.db().get_or_insert_with(key, || RedisObject::Hash(HashMap::new())) {
         RedisObject::Hash(h) => Ok(h),
@@ -310,7 +314,12 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
                     }
                 }
                 Some(n) => {
-                    let n = (-n) as usize;
+                    // Negative count allows duplicates; cap the magnitude and
+                    // guard i64::MIN to avoid an unbounded allocation.
+                    let n = match n.checked_neg() {
+                        Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
+                        _ => return RespValue::error("ERR count value is out of range"),
+                    };
                     use rand::seq::SliceRandom;
                     let entries: Vec<(Bytes, Bytes)> = hash.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                     let mut items = Vec::new();

@@ -20,6 +20,12 @@ use super::SharedState;
 /// client query-buffer cap.
 const MAX_QUERY_BUFFER: usize = 1024 * 1024 * 1024;
 
+/// Idle read timeout. When it fires, a connection that is mid-command (has a
+/// partial request buffered) or not yet authenticated is dropped — the
+/// slow-loris shapes. A fully idle, authenticated client with an empty buffer
+/// (a normal pooled connection) is left alone.
+const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A stream that may or may not be TLS-wrapped.
 pub enum MaybeTls {
     Plain(TcpStream),
@@ -180,8 +186,25 @@ impl Connection {
                     self.stream.write_all(&data).await?;
                 }
 
-                // Read more data from the socket
-                let n = self.stream.read_buf(&mut self.buffer).await?;
+                // Read more data from the socket, bounded by an idle timeout.
+                let n = match tokio::time::timeout(
+                    READ_IDLE_TIMEOUT,
+                    self.stream.read_buf(&mut self.buffer),
+                )
+                .await
+                {
+                    Ok(res) => res?,
+                    Err(_) => {
+                        // Idle timeout: reap slow/partial or pre-auth connections,
+                        // but let an authenticated client with no pending data
+                        // keep its connection open.
+                        if self.buffer.is_empty() && self.authenticated {
+                            continue;
+                        }
+                        self.cleanup_pubsub().await;
+                        return Ok(());
+                    }
+                };
                 if n == 0 {
                     self.cleanup_pubsub().await;
                     return Ok(());
@@ -836,7 +859,7 @@ impl Connection {
 
         if username == "default" {
             if let Some(ref req_pass) = self.state.config.requirepass {
-                if password == *req_pass {
+                if crate::command::acl::verify_secret(&password, req_pass) {
                     self.auth_success(username);
                     return RespValue::ok();
                 }
@@ -863,7 +886,7 @@ impl Connection {
 
         if username == "default" {
             if let Some(ref req_pass) = self.state.config.requirepass {
-                if password == *req_pass {
+                if crate::command::acl::verify_secret(&password, req_pass) {
                     self.auth_success(username);
                     return None;
                 }

@@ -297,6 +297,13 @@ pub fn cmd_bf_reserve(ctx: &mut CommandContext) -> RespValue {
         _ => return RespValue::error("ERR (error) bad capacity"),
     };
 
+    // Reject dimensions that would allocate more than the per-structure cap.
+    let num_bits = optimal_bits(capacity, error_rate).max(8);
+    let byte_count = (num_bits as usize + 7) / 8;
+    if byte_count > MAX_PROB_BYTES {
+        return RespValue::error("ERR Bloom filter dimensions too large");
+    }
+
     let db = ctx.db();
     if db.exists(&key) {
         return RespValue::error("ERR item exists");
@@ -364,7 +371,18 @@ fn new_cms(width: u32, depth: u32) -> Vec<u8> {
 }
 
 fn is_cms(data: &[u8]) -> bool {
-    data.len() >= CMS_META_LEN && &data[0..CMS_HEADER_LEN] == CMS_HEADER
+    if data.len() < CMS_META_LEN || &data[0..CMS_HEADER_LEN] != CMS_HEADER {
+        return false;
+    }
+    // Reject a forged value whose declared dimensions don't fit the buffer.
+    // Without this, counter accessors index out of bounds (panic) and readers
+    // allocate from attacker-controlled dimensions.
+    let width = cms_width(data) as usize;
+    let depth = cms_depth(data) as usize;
+    match width.checked_mul(depth).and_then(|c| c.checked_mul(8)) {
+        Some(counter_bytes) => data.len() >= CMS_META_LEN + counter_bytes,
+        None => false,
+    }
 }
 
 fn cms_width(data: &[u8]) -> u32 {
@@ -754,7 +772,17 @@ fn new_topk(k: u32, width: u32, depth: u32, decay: f64) -> Vec<u8> {
 }
 
 fn is_topk(data: &[u8]) -> bool {
-    data.len() >= TOPK_META_LEN && &data[0..TOPK_HEADER_LEN] == TOPK_HEADER
+    if data.len() < TOPK_META_LEN || &data[0..TOPK_HEADER_LEN] != TOPK_HEADER {
+        return false;
+    }
+    // Reject a forged value whose declared CMS dimensions don't fit the buffer,
+    // so `from_bytes` cannot read counters out of bounds.
+    let width = topk_width(data) as usize;
+    let depth = topk_depth(data) as usize;
+    match width.checked_mul(depth).and_then(|c| c.checked_mul(8)) {
+        Some(counter_bytes) => data.len() >= TOPK_META_LEN + counter_bytes,
+        None => false,
+    }
 }
 
 fn topk_k(data: &[u8]) -> u32 {
@@ -810,7 +838,10 @@ impl TopKState {
             counters.push(val);
         }
 
-        let mut heap = Vec::with_capacity(num_items);
+        // Each heap entry needs at least 12 bytes (4-byte name length + 8-byte
+        // count), so bound the pre-allocation by what the buffer can actually
+        // hold — a forged `num_items` can't drive a huge reservation.
+        let mut heap = Vec::with_capacity(num_items.min(data.len() / 12 + 1));
         let mut pos = TOPK_META_LEN + cms_size * 8;
         for _ in 0..num_items {
             if pos + 4 > data.len() {
@@ -1204,6 +1235,30 @@ mod tests {
         let k = bloom_k(&data);
         // k = ceil(-log2(0.001)) = ceil(9.97) = 10
         assert_eq!(k, 10);
+    }
+
+    #[test]
+    fn test_forged_cms_header_rejected() {
+        // Magic + oversized declared width/depth but a short buffer must be
+        // rejected so counter accessors can't index out of bounds.
+        let mut forged = Vec::new();
+        forged.extend_from_slice(CMS_HEADER);
+        forged.extend_from_slice(&u32::MAX.to_le_bytes()); // width
+        forged.extend_from_slice(&u32::MAX.to_le_bytes()); // depth
+        forged.extend_from_slice(&0u64.to_le_bytes()); // total_count
+        assert!(!is_cms(&forged));
+    }
+
+    #[test]
+    fn test_forged_topk_header_rejected() {
+        let mut forged = Vec::new();
+        forged.extend_from_slice(TOPK_HEADER);
+        forged.extend_from_slice(&3u32.to_le_bytes()); // k
+        forged.extend_from_slice(&u32::MAX.to_le_bytes()); // width
+        forged.extend_from_slice(&u32::MAX.to_le_bytes()); // depth
+        forged.extend_from_slice(&0.9f64.to_le_bytes()); // decay
+        forged.extend_from_slice(&0u32.to_le_bytes()); // num_items
+        assert!(!is_topk(&forged));
     }
 
     #[test]
