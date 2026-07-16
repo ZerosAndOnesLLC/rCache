@@ -39,6 +39,22 @@ pub fn decompress(data: &[u8]) -> Result<Bytes, String> {
     let original_len = read_original_len(data).map_err(|e| e.to_string())?;
     let compressed_data = &data[8..];
 
+    // Guard against a decompression bomb: `decompress_size_prepended` allocates
+    // from the size prefix embedded in `compressed_data`, which is attacker-
+    // controlled if the value was crafted. Reject anything whose declared output
+    // exceeds the cap before decompressing.
+    const MAX_DECOMPRESSED: usize = 512 * 1024 * 1024;
+    if original_len > MAX_DECOMPRESSED {
+        return Err("decompressed size exceeds maximum".to_string());
+    }
+    if compressed_data.len() >= 4 {
+        let prepended =
+            u32::from_le_bytes(compressed_data[0..4].try_into().unwrap()) as usize;
+        if prepended > MAX_DECOMPRESSED {
+            return Err("decompressed size exceeds maximum".to_string());
+        }
+    }
+
     match lz4_flex::decompress_size_prepended(compressed_data) {
         Ok(decompressed) => {
             if decompressed.len() != original_len {
@@ -104,6 +120,17 @@ mod tests {
         let compressed = compress(data);
         assert_eq!(original_size(&compressed), data.len());
         assert_eq!(original_size(data), data.len());
+    }
+
+    #[test]
+    fn test_decompress_rejects_oversized_header() {
+        // Forge a value whose header claims a huge original length; decompress
+        // must reject it rather than attempting a giant allocation.
+        let mut forged = Vec::new();
+        forged.extend_from_slice(LZ4_MAGIC);
+        forged.extend_from_slice(&u32::MAX.to_le_bytes()); // original_len
+        forged.extend_from_slice(&[0u8; 8]); // dummy compressed body
+        assert!(decompress(&forged).is_err());
     }
 
     #[test]
