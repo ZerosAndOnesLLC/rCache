@@ -392,6 +392,26 @@ impl Connection {
                     }
                 }
             }
+            // Check channel patterns for pub/sub commands.
+            if !acl::user_has_all_channels(&self.auth_username) {
+                for channel in acl::command_channels(&cmd_name, &args) {
+                    let chan_str = String::from_utf8_lossy(channel);
+                    if !acl::is_channel_allowed(&self.auth_username, &chan_str) {
+                        return RespValue::error(
+                            "NOPERM this user has no permissions to access one of the channels used as arguments"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
+        // ACL WHOAMI reflects the actual authenticated user (the command handler
+        // has no connection state, so it is answered here).
+        if cmd_name == "ACL" && args.len() >= 2
+            && String::from_utf8_lossy(&args[1]).eq_ignore_ascii_case("WHOAMI")
+        {
+            return RespValue::bulk_string(Bytes::from(self.auth_username.clone()));
         }
 
         // Handle CLIENT TRACKING specially

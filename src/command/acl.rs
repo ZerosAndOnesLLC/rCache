@@ -586,6 +586,44 @@ pub fn command_keys<'a>(cmd: &str, args: &'a [Bytes]) -> Vec<&'a Bytes> {
     }
 }
 
+/// Return the argument values that are pub/sub channels (or patterns) for `cmd`,
+/// for per-channel ACL checks. Returns an empty vec for non-pub/sub commands.
+pub fn command_channels<'a>(cmd: &str, args: &'a [Bytes]) -> Vec<&'a Bytes> {
+    match cmd {
+        // Only the first argument is a channel; the rest is the payload.
+        "PUBLISH" | "SPUBLISH" => args.get(1).into_iter().collect(),
+        // Every argument after the command is a channel or pattern.
+        "SUBSCRIBE" | "UNSUBSCRIBE" | "SSUBSCRIBE" | "SUNSUBSCRIBE" | "PSUBSCRIBE"
+        | "PUNSUBSCRIBE" => args.iter().skip(1).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Whether `username`'s channel patterns cover every channel.
+pub fn user_has_all_channels(username: &str) -> bool {
+    match ACL_USERS.lock() {
+        Ok(users) => users
+            .get(username)
+            .map(|u| u.channel_patterns.iter().any(|p| p == "*"))
+            .unwrap_or(true),
+        Err(_) => false,
+    }
+}
+
+/// Whether `username` may use the pub/sub `channel`.
+pub fn is_channel_allowed(username: &str, channel: &str) -> bool {
+    match ACL_USERS.lock() {
+        Ok(users) => match users.get(username) {
+            Some(u) => u
+                .channel_patterns
+                .iter()
+                .any(|pat| pat == "*" || crate::storage::db::glob_match(pat, channel)),
+            None => true,
+        },
+        Err(_) => false,
+    }
+}
+
 /// Whether `username`'s key patterns cover every key (no per-key check needed).
 pub fn user_has_all_keys(username: &str) -> bool {
     match ACL_USERS.lock() {
@@ -677,6 +715,27 @@ mod tests {
         let keys = command_keys("GET", &args);
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].as_ref(), b"mykey");
+    }
+
+    #[test]
+    fn test_command_channels() {
+        let mk = |parts: &[&str]| {
+            parts.iter().map(|s| Bytes::from(s.to_string())).collect::<Vec<_>>()
+        };
+
+        // PUBLISH: only the channel, not the message payload.
+        let args = mk(&["PUBLISH", "news", "hello world"]);
+        let chans = command_channels("PUBLISH", &args);
+        assert_eq!(chans.len(), 1);
+        assert_eq!(chans[0].as_ref(), b"news");
+
+        // SUBSCRIBE: every argument is a channel.
+        let args = mk(&["SUBSCRIBE", "a", "b"]);
+        assert_eq!(command_channels("SUBSCRIBE", &args).len(), 2);
+
+        // Non-pub/sub command: no channels.
+        let args = mk(&["GET", "key"]);
+        assert!(command_channels("GET", &args).is_empty());
     }
 
     #[test]

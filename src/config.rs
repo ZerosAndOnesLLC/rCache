@@ -1,5 +1,5 @@
 /// Server configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     pub bind: String,
     pub port: u16,
@@ -37,6 +37,39 @@ pub struct Config {
     /// Protected mode: when enabled and no authentication is configured, only
     /// loopback clients are accepted. Mirrors Redis's protected-mode default.
     pub protected_mode: bool,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact requirepass so it never lands in a `{:?}` log line.
+        let requirepass = self.requirepass.as_ref().map(|_| "***");
+        f.debug_struct("Config")
+            .field("bind", &self.bind)
+            .field("port", &self.port)
+            .field("databases", &self.databases)
+            .field("maxclients", &self.maxclients)
+            .field("requirepass", &requirepass)
+            .field("hz", &self.hz)
+            .field("maxmemory", &self.maxmemory)
+            .field("maxmemory_policy", &self.maxmemory_policy)
+            .field("maxmemory_samples", &self.maxmemory_samples)
+            .field("rdb_filename", &self.rdb_filename)
+            .field("aof_enabled", &self.aof_enabled)
+            .field("aof_filename", &self.aof_filename)
+            .field("appendfsync", &self.appendfsync)
+            .field("lfu_log_factor", &self.lfu_log_factor)
+            .field("lfu_decay_time", &self.lfu_decay_time)
+            .field("http_port", &self.http_port)
+            .field("tls_port", &self.tls_port)
+            .field("tls_cert_file", &self.tls_cert_file)
+            .field("tls_key_file", &self.tls_key_file)
+            .field("compression_threshold", &self.compression_threshold)
+            .field("compression_enabled", &self.compression_enabled)
+            .field("slowlog_log_slower_than", &self.slowlog_log_slower_than)
+            .field("slowlog_max_len", &self.slowlog_max_len)
+            .field("protected_mode", &self.protected_mode)
+            .finish()
+    }
 }
 
 impl Default for Config {

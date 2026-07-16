@@ -424,7 +424,7 @@ pub fn replay(path: &Path, store: &mut Store) -> io::Result<usize> {
                             if let Ok(ts) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
                                 let now_secs = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
+                                    .unwrap_or_default()
                                     .as_secs();
                                 if ts > now_secs {
                                     let db = store.db_mut(current_db);
@@ -441,7 +441,7 @@ pub fn replay(path: &Path, store: &mut Store) -> io::Result<usize> {
                             if let Ok(ts_ms) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
                                 let now_ms = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
+                                    .unwrap_or_default()
                                     .as_millis() as u64;
                                 if ts_ms > now_ms {
                                     let db = store.db_mut(current_db);

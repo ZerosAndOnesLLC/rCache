@@ -27,26 +27,26 @@ impl ScriptCache {
     /// Load a script into the cache, returning its SHA1 hash.
     pub fn load(&self, script: &str) -> String {
         let sha = sha1_hex(script);
-        let mut scripts = self.scripts.lock().unwrap();
+        let mut scripts = self.scripts.lock().unwrap_or_else(|e| e.into_inner());
         scripts.insert(sha.clone(), script.to_string());
         sha
     }
 
     /// Check if a script exists by SHA1.
     pub fn exists(&self, sha: &str) -> bool {
-        let scripts = self.scripts.lock().unwrap();
+        let scripts = self.scripts.lock().unwrap_or_else(|e| e.into_inner());
         scripts.contains_key(sha)
     }
 
     /// Get a script by SHA1.
     pub fn get(&self, sha: &str) -> Option<String> {
-        let scripts = self.scripts.lock().unwrap();
+        let scripts = self.scripts.lock().unwrap_or_else(|e| e.into_inner());
         scripts.get(sha).cloned()
     }
 
     /// Flush all cached scripts.
     pub fn flush(&self) {
-        let mut scripts = self.scripts.lock().unwrap();
+        let mut scripts = self.scripts.lock().unwrap_or_else(|e| e.into_inner());
         scripts.clear();
     }
 }
@@ -84,7 +84,7 @@ impl FunctionLibrary {
             .map(|s| s.trim().to_string())
             .ok_or_else(|| "ERR Library name not found in header".to_string())?;
 
-        let mut libs = self.libraries.lock().unwrap();
+        let mut libs = self.libraries.lock().unwrap_or_else(|e| e.into_inner());
         if libs.contains_key(&name) && !replace {
             return Err(format!("ERR Library '{}' already exists", name));
         }
@@ -130,7 +130,7 @@ impl FunctionLibrary {
     }
 
     pub fn delete(&self, name: &str) -> Result<(), String> {
-        let mut libs = self.libraries.lock().unwrap();
+        let mut libs = self.libraries.lock().unwrap_or_else(|e| e.into_inner());
         if libs.remove(name).is_some() {
             Ok(())
         } else {
@@ -139,7 +139,7 @@ impl FunctionLibrary {
     }
 
     pub fn list(&self) -> Vec<(String, String, Vec<String>)> {
-        let libs = self.libraries.lock().unwrap();
+        let libs = self.libraries.lock().unwrap_or_else(|e| e.into_inner());
         libs.values()
             .map(|lib| {
                 let fnames: Vec<String> = lib.functions.keys().cloned().collect();
@@ -149,7 +149,7 @@ impl FunctionLibrary {
     }
 
     pub fn find_function(&self, fname: &str) -> Option<String> {
-        let libs = self.libraries.lock().unwrap();
+        let libs = self.libraries.lock().unwrap_or_else(|e| e.into_inner());
         for lib in libs.values() {
             if lib.functions.contains_key(fname) {
                 return Some(lib.code.clone());
@@ -159,7 +159,7 @@ impl FunctionLibrary {
     }
 
     pub fn flush(&self) {
-        let mut libs = self.libraries.lock().unwrap();
+        let mut libs = self.libraries.lock().unwrap_or_else(|e| e.into_inner());
         libs.clear();
     }
 }
