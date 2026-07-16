@@ -22,7 +22,8 @@ pub fn cmd_eval(ctx: &mut CommandContext) -> RespValue {
     let keys: Vec<Bytes> = ctx.args[3..3 + numkeys].to_vec();
     let argv: Vec<Bytes> = ctx.args[3 + numkeys..].to_vec();
 
-    scripting_engine::execute_script(&script, &keys, &argv, ctx.store, ctx.db_index)
+    let readonly = String::from_utf8_lossy(&ctx.args[0]).eq_ignore_ascii_case("eval_ro");
+    scripting_engine::execute_script(&script, &keys, &argv, ctx.store, ctx.db_index, readonly)
 }
 
 /// EVALSHA sha1 numkeys key [key ...] arg [arg ...]
@@ -55,7 +56,8 @@ pub fn cmd_evalsha(ctx: &mut CommandContext) -> RespValue {
         Some(script_source) => {
             let keys: Vec<Bytes> = ctx.args[3..3 + numkeys].to_vec();
             let argv: Vec<Bytes> = ctx.args[3 + numkeys..].to_vec();
-            scripting_engine::execute_script(&script_source, &keys, &argv, ctx.store, ctx.db_index)
+            let readonly = String::from_utf8_lossy(&ctx.args[0]).eq_ignore_ascii_case("evalsha_ro");
+            scripting_engine::execute_script(&script_source, &keys, &argv, ctx.store, ctx.db_index, readonly)
         }
         None => RespValue::error(format!("NOSCRIPT No matching script. Please use EVAL.")),
     }
@@ -289,13 +291,14 @@ pub fn cmd_fcall(ctx: &mut CommandContext) -> RespValue {
         Some(script) => {
             let keys: Vec<Bytes> = ctx.args[3..3 + numkeys].to_vec();
             let argv: Vec<Bytes> = ctx.args[3 + numkeys..].to_vec();
-            scripting_engine::execute_script(&script, &keys, &argv, ctx.store, ctx.db_index)
+            let readonly = String::from_utf8_lossy(&ctx.args[0]).eq_ignore_ascii_case("fcall_ro");
+            scripting_engine::execute_script(&script, &keys, &argv, ctx.store, ctx.db_index, readonly)
         }
         None => RespValue::error(format!("ERR Function not found")),
     }
 }
 
-/// FCALL_RO - same as FCALL but read-only (we don't enforce read-only in this pass)
+/// FCALL_RO - same as FCALL but rejects write commands (read-only).
 pub fn cmd_fcall_ro(ctx: &mut CommandContext) -> RespValue {
     cmd_fcall(ctx)
 }

@@ -138,66 +138,6 @@ impl PubSubManager {
     }
 }
 
-/// ACL user definition.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct AclUser {
-    pub enabled: bool,
-    /// SHA-256 hashed passwords.
-    pub passwords: Vec<String>,
-    pub allowed_commands: HashSet<String>,
-    pub denied_commands: HashSet<String>,
-    pub key_patterns: Vec<String>,
-    pub channel_patterns: Vec<String>,
-    pub all_commands: bool,
-    pub all_keys: bool,
-    pub no_pass: bool,
-}
-
-impl AclUser {
-    pub fn default_user() -> Self {
-        Self {
-            enabled: true,
-            passwords: Vec::new(),
-            allowed_commands: HashSet::new(),
-            denied_commands: HashSet::new(),
-            key_patterns: vec!["*".to_string()],
-            channel_patterns: vec!["*".to_string()],
-            all_commands: true,
-            all_keys: true,
-            no_pass: true,
-        }
-    }
-
-    /// Check if a command is allowed for this user.
-    pub fn is_command_allowed(&self, cmd: &str) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        let cmd_upper = cmd.to_uppercase();
-        if self.denied_commands.contains(&cmd_upper) {
-            return false;
-        }
-        if self.all_commands {
-            return true;
-        }
-        self.allowed_commands.contains(&cmd_upper)
-    }
-
-    /// Check if a key pattern matches.
-    pub fn is_key_allowed(&self, key: &str) -> bool {
-        if self.all_keys {
-            return true;
-        }
-        for pattern in &self.key_patterns {
-            if crate::storage::db::glob_match(pattern, key) {
-                return true;
-            }
-        }
-        false
-    }
-}
-
 /// Per-command latency tracking.
 #[derive(Debug, Clone, Default)]
 pub struct LatencyStats {
@@ -250,8 +190,6 @@ pub struct SharedState {
     pub script_cache: ScriptCache,
     /// Function library.
     pub function_library: FunctionLibrary,
-    /// ACL user registry.
-    pub acl_users: Mutex<HashMap<String, AclUser>>,
     /// Per-command latency statistics.
     pub latency_stats: Mutex<HashMap<String, LatencyStats>>,
     /// Slow log entries.
@@ -353,17 +291,9 @@ impl Server {
             None
         };
 
-        // Initialize default ACL user
-        let mut acl_users = HashMap::new();
-        let mut default_user = AclUser::default_user();
-        if let Some(ref pass) = self.config.requirepass {
-            // Hash the requirepass for the default user
-            use sha2::{Sha256, Digest};
-            let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
-            default_user.passwords.push(hash);
-            default_user.no_pass = false;
-        }
-        acl_users.insert("default".to_string(), default_user);
+        // Apply requirepass to the shared ACL registry (the single source of
+        // truth read by both the RESP and HTTP enforcement paths).
+        crate::command::acl::init_default_password(self.config.requirepass.as_deref());
 
         let state = Arc::new(SharedState {
             store: Mutex::new(self.store),
@@ -380,7 +310,6 @@ impl Server {
             connected_clients: AtomicU64::new(0),
             script_cache: ScriptCache::new(),
             function_library: FunctionLibrary::new(),
-            acl_users: Mutex::new(acl_users),
             latency_stats: Mutex::new(HashMap::new()),
             slowlog: Mutex::new(Vec::new()),
             slowlog_next_id: AtomicU64::new(0),

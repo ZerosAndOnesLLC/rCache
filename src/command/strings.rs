@@ -424,6 +424,19 @@ pub fn cmd_setrange(ctx: &mut CommandContext) -> RespValue {
     };
     let value = ctx.args[3].clone();
 
+    // Cap the resulting length at Redis's 512 MB string limit to prevent an
+    // attacker-controlled offset from forcing a huge allocation, and to avoid
+    // usize overflow in `offset + value.len()`.
+    const MAX_STRING_BYTES: usize = 512 * 1024 * 1024;
+    let needed = match offset.checked_add(value.len()) {
+        Some(n) if n <= MAX_STRING_BYTES => n,
+        _ => {
+            return RespValue::error(
+                "ERR string exceeds maximum allowed size (proto-max-bulk-len)",
+            )
+        }
+    };
+
     let db = ctx.db();
     let mut existing = match db.get(&key) {
         Some(RedisObject::String(b)) => b.to_vec(),
@@ -431,7 +444,6 @@ pub fn cmd_setrange(ctx: &mut CommandContext) -> RespValue {
         None => Vec::new(),
     };
 
-    let needed = offset + value.len();
     if needed > existing.len() {
         existing.resize(needed, 0);
     }

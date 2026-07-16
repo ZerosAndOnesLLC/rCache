@@ -164,20 +164,50 @@ impl FunctionLibrary {
     }
 }
 
+/// Hard memory ceiling for a single script's Lua VM (256 MB). Prevents a script
+/// from allocating until the host is OOM-killed.
+const SCRIPT_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
+
+/// Wall-clock budget for a single script (5 s). Command execution is
+/// single-threaded and holds the store lock, so a runaway script would
+/// otherwise wedge the whole server. Enforced via an instruction hook.
+const SCRIPT_TIMEOUT_MS: u64 = 5_000;
+
 /// Execute a Lua script with the given KEYS and ARGV against the store.
 /// This creates a sandboxed Lua environment with redis.call() and redis.pcall().
+/// When `readonly` is set (EVAL_RO / EVALSHA_RO / FCALL_RO), write commands
+/// invoked from the script are rejected.
 pub fn execute_script(
     script: &str,
     keys: &[Bytes],
     argv: &[Bytes],
     store: &mut Store,
     db_index: usize,
+    readonly: bool,
 ) -> RespValue {
     use mlua::prelude::*;
 
-    let lua = match Lua::new() {
-        lua => lua,
-    };
+    let lua = Lua::new();
+
+    // Bound the VM's memory so a script cannot exhaust host RAM.
+    let _ = lua.set_memory_limit(SCRIPT_MEMORY_LIMIT);
+
+    // Abort the script if it runs past its wall-clock budget. The hook fires
+    // every N instructions; returning an error unwinds the Lua call.
+    let deadline = std::time::Duration::from_millis(SCRIPT_TIMEOUT_MS);
+    let started = std::time::Instant::now();
+    lua.set_hook(
+        mlua::HookTriggers::new().every_nth_instruction(100_000),
+        move |_lua, _debug| {
+            if started.elapsed() > deadline {
+                Err(mlua::Error::RuntimeError(
+                    "script exceeded time limit".to_string(),
+                ))
+            } else {
+                Ok(mlua::VmState::Continue)
+            }
+        },
+    );
 
     // Set up the sandbox: remove dangerous globals
     let sandbox_result = lua.scope(|_scope| {
@@ -263,7 +293,7 @@ pub fn execute_script(
                 }
 
                 let mut store_ref = store_cell.borrow_mut();
-                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args);
+                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args, readonly);
                 resp_to_lua(lua_ctx, &resp)
             })?;
 
@@ -294,7 +324,7 @@ pub fn execute_script(
                 }
 
                 let mut store_ref = store_cell.borrow_mut();
-                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args);
+                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args, readonly);
                 match &resp {
                     RespValue::Error(e) => {
                         let err_table = lua_ctx.create_table()?;
@@ -353,12 +383,34 @@ pub fn execute_script(
 }
 
 /// Execute a Redis command from within a Lua script.
-fn execute_redis_command(store: &mut Store, db_index: usize, args: &[String]) -> RespValue {
+fn execute_redis_command(
+    store: &mut Store,
+    db_index: usize,
+    args: &[String],
+    readonly: bool,
+) -> RespValue {
     if args.is_empty() {
         return RespValue::error("ERR empty command");
     }
 
-    let _cmd = args[0].to_uppercase();
+    let cmd = args[0].to_uppercase();
+
+    // Block nested scripting: a script calling EVAL/FCALL/etc. can recurse
+    // without bound and overflow the native stack, aborting the process.
+    if matches!(
+        cmd.as_str(),
+        "EVAL" | "EVALSHA" | "EVAL_RO" | "EVALSHA_RO" | "FCALL" | "FCALL_RO" | "FUNCTION" | "SCRIPT"
+    ) {
+        return RespValue::error("ERR This Redis command is not allowed from script");
+    }
+
+    // In read-only script context, reject write commands.
+    if readonly && crate::persistence::aof::is_write_command(&cmd) {
+        return RespValue::error(
+            "ERR Write commands are not allowed from read-only scripts.",
+        );
+    }
+
     let byte_args: Vec<Bytes> = args.iter().map(|s| Bytes::from(s.clone())).collect();
 
     // Use the command registry to execute
@@ -474,7 +526,7 @@ mod tests {
     #[test]
     fn test_execute_simple_script() {
         let mut store = Store::new(16);
-        let result = execute_script("return 42", &[], &[], &mut store, 0);
+        let result = execute_script("return 42", &[], &[], &mut store, 0, false);
         assert_eq!(result, RespValue::integer(42));
     }
 
@@ -489,6 +541,7 @@ mod tests {
             &argv,
             &mut store,
             0,
+            false,
         );
         assert_eq!(result, RespValue::bulk_string(Bytes::from("mykey myval")));
     }
@@ -502,8 +555,26 @@ mod tests {
             &[],
             &mut store,
             0,
+            false,
         );
         assert_eq!(result, RespValue::bulk_string(Bytes::from("testval")));
+    }
+
+    #[test]
+    fn test_readonly_script_rejects_writes() {
+        let mut store = Store::new(16);
+        let result = execute_script(
+            "return redis.call('SET', 'k', 'v')",
+            &[],
+            &[],
+            &mut store,
+            0,
+            true,
+        );
+        match result {
+            RespValue::Error(e) => assert!(e.contains("read-only")),
+            other => panic!("expected error, got {:?}", other),
+        }
     }
 
     #[test]
@@ -515,6 +586,7 @@ mod tests {
             &[],
             &mut store,
             0,
+            false,
         );
         // pcall should catch the error
         match result {

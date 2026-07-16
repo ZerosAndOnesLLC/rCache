@@ -13,6 +13,13 @@ use crate::command::CommandContext;
 use crate::storage::db::glob_match;
 use super::SharedState;
 
+/// Maximum size of a connection's unprocessed query buffer. A single bulk
+/// argument may be up to 512 MB (the parser's `MAX_BULK_LEN`), so this ceiling
+/// sits above that to allow one max-size argument while still bounding an
+/// attacker who streams a partial/incomplete frame forever. Mirrors Redis's
+/// client query-buffer cap.
+const MAX_QUERY_BUFFER: usize = 1024 * 1024 * 1024;
+
 /// A stream that may or may not be TLS-wrapped.
 pub enum MaybeTls {
     Plain(TcpStream),
@@ -57,12 +64,6 @@ impl AsyncWrite for MaybeTls {
             MaybeTls::Tls(s) => Pin::new(s).poll_shutdown(cx),
         }
     }
-}
-
-enum AclMatch {
-    Ok,
-    WrongPass,
-    Disabled,
 }
 
 pub struct Connection {
@@ -146,6 +147,12 @@ impl Connection {
                             self.cleanup_pubsub().await;
                             return Ok(());
                         }
+                        if self.buffer.len() > MAX_QUERY_BUFFER {
+                            let err = RespValue::error("ERR Protocol error: unbalanced/too-large query buffer");
+                            let _ = self.stream.write_all(&err.serialize()).await;
+                            self.cleanup_pubsub().await;
+                            return Ok(());
+                        }
                         while let Some(response) = self.try_process_command().await? {
                             let data = response.serialize();
                             self.stream.write_all(&data).await?;
@@ -176,6 +183,12 @@ impl Connection {
                 // Read more data from the socket
                 let n = self.stream.read_buf(&mut self.buffer).await?;
                 if n == 0 {
+                    self.cleanup_pubsub().await;
+                    return Ok(());
+                }
+                if self.buffer.len() > MAX_QUERY_BUFFER {
+                    let err = RespValue::error("ERR Protocol error: unbalanced/too-large query buffer");
+                    let _ = self.stream.write_all(&err.serialize()).await;
                     self.cleanup_pubsub().await;
                     return Ok(());
                 }
@@ -328,25 +341,25 @@ impl Connection {
             }
         }
 
-        // ACL check: verify user is allowed to execute this command
+        // ACL check: verify user is allowed to execute this command. This reads
+        // the shared ACL registry that `ACL SETUSER` mutates, so runtime rule
+        // changes are enforced.
         {
-            let acl_users = self.state.acl_users.lock().await;
-            if let Some(user) = acl_users.get(&self.auth_username) {
-                if !user.is_command_allowed(&cmd_name) {
-                    return RespValue::error(format!(
-                        "NOPERM this user has no permissions to run the '{}' command",
-                        cmd_name.to_lowercase()
-                    ));
-                }
-                // Check key patterns for commands that have keys
-                if args.len() > 1 && !user.all_keys {
-                    let key_str = String::from_utf8_lossy(&args[1]);
-                    if !user.is_key_allowed(&key_str) {
-                        return RespValue::error(
-                            "NOPERM this user has no permissions to access one of the keys used as arguments"
-                                .to_string(),
-                        );
-                    }
+            use crate::command::acl;
+            if !acl::is_command_allowed(&self.auth_username, &cmd_name) {
+                return RespValue::error(format!(
+                    "NOPERM this user has no permissions to run the '{}' command",
+                    cmd_name.to_lowercase()
+                ));
+            }
+            // Check key patterns for commands that have keys
+            if args.len() > 1 && !acl::user_has_all_keys(&self.auth_username) {
+                let key_str = String::from_utf8_lossy(&args[1]);
+                if !acl::is_key_allowed(&self.auth_username, &key_str) {
+                    return RespValue::error(
+                        "NOPERM this user has no permissions to access one of the keys used as arguments"
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -832,27 +845,8 @@ impl Connection {
             }
         }
 
-        let acl_match = {
-            let users = self.state.acl_users.lock().await;
-            users.get(&username).map(|u| {
-                if !u.enabled {
-                    AclMatch::Disabled
-                } else if u.no_pass {
-                    AclMatch::Ok
-                } else {
-                    use sha2::{Digest, Sha256};
-                    let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
-                    if u.passwords.contains(&hash) {
-                        AclMatch::Ok
-                    } else {
-                        AclMatch::WrongPass
-                    }
-                }
-            })
-        };
-
-        match acl_match {
-            Some(AclMatch::Ok) => {
+        match crate::command::acl::check_password(&username, &password) {
+            crate::command::acl::AuthOutcome::Ok => {
                 self.auth_success(username);
                 RespValue::ok()
             }
@@ -876,27 +870,8 @@ impl Connection {
             }
         }
 
-        let acl_match = {
-            let users = self.state.acl_users.lock().await;
-            users.get(&username).map(|u| {
-                if !u.enabled {
-                    AclMatch::Disabled
-                } else if u.no_pass {
-                    AclMatch::Ok
-                } else {
-                    use sha2::{Digest, Sha256};
-                    let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
-                    if u.passwords.contains(&hash) {
-                        AclMatch::Ok
-                    } else {
-                        AclMatch::WrongPass
-                    }
-                }
-            })
-        };
-
-        match acl_match {
-            Some(AclMatch::Ok) => {
+        match crate::command::acl::check_password(&username, &password) {
+            crate::command::acl::AuthOutcome::Ok => {
                 self.auth_success(username);
                 None
             }

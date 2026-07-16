@@ -3,6 +3,13 @@ use crate::protocol::RespValue;
 use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
+/// Maximum addressable byte length of a string value (512 MB), matching Redis's
+/// proto-max-bulk-len. Bit offsets that would grow a string past this are
+/// rejected rather than triggering a multi-GB/TB allocation.
+const MAX_STRING_BYTES: usize = 512 * 1024 * 1024;
+/// Maximum bit offset, derived from the byte cap.
+const MAX_BIT_OFFSET: usize = MAX_STRING_BYTES * 8;
+
 fn get_or_create_string(ctx: &mut CommandContext, key: &Bytes) -> Vec<u8> {
     let db = ctx.db();
     match db.get(key) {
@@ -23,8 +30,8 @@ fn check_type(ctx: &mut CommandContext, key: &Bytes) -> Result<(), RespValue> {
 pub fn cmd_setbit(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let offset = match super::parse::usize_(&ctx.args[2]) {
-        Some(v) => v,
-        None => return RespValue::error("ERR bit offset is not an integer or out of range"),
+        Some(v) if v < MAX_BIT_OFFSET => v,
+        _ => return RespValue::error("ERR bit offset is not an integer or out of range"),
     };
     let value: u8 = match String::from_utf8_lossy(&ctx.args[3]).parse::<u8>() {
         Ok(v) if v <= 1 => v,
@@ -476,12 +483,18 @@ fn parse_encoding(arg: &Bytes) -> Option<(bool, u32)> {
 
 fn parse_bitfield_offset(arg: &Bytes, bits: u32) -> Option<usize> {
     let s = String::from_utf8_lossy(arg);
-    if let Some(rest) = s.strip_prefix('#') {
+    let offset = if let Some(rest) = s.strip_prefix('#') {
         let idx: usize = rest.parse().ok()?;
-        Some(idx * bits as usize)
+        idx.checked_mul(bits as usize)?
     } else {
-        s.parse().ok()
+        s.parse().ok()?
+    };
+    // Reject offsets that would grow the backing string past the size cap,
+    // preventing multi-GB allocations in read_bits/write_bits.
+    if offset >= MAX_BIT_OFFSET {
+        return None;
     }
+    Some(offset)
 }
 
 fn read_bits(data: &[u8], offset: usize, bits: u32, signed: bool) -> i64 {
