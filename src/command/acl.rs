@@ -553,6 +553,39 @@ pub fn is_key_allowed(username: &str, key: &str) -> bool {
     }
 }
 
+/// Return the argument values that are keys for `cmd`, for per-key ACL checks.
+/// `args[0]` is the command name. This corrects the previous "always check
+/// `args[1]`" behavior, which under-checked multi-key commands (MGET, MSET,
+/// DEL, RENAME, ...) and mis-treated non-key arguments (PUBLISH channel,
+/// SELECT index, ...) as keys.
+pub fn command_keys<'a>(cmd: &str, args: &'a [Bytes]) -> Vec<&'a Bytes> {
+    match cmd {
+        // Commands with no key arguments.
+        "PING" | "ECHO" | "SELECT" | "AUTH" | "HELLO" | "QUIT" | "INFO" | "CONFIG" | "CLIENT"
+        | "COMMAND" | "DBSIZE" | "FLUSHDB" | "FLUSHALL" | "SWAPDB" | "TIME" | "DEBUG"
+        | "SLOWLOG" | "ACL" | "SUBSCRIBE" | "UNSUBSCRIBE" | "PSUBSCRIBE" | "PUNSUBSCRIBE"
+        | "PUBLISH" | "SPUBLISH" | "PUBSUB" | "SCRIPT" | "FUNCTION" | "FCALL" | "FCALL_RO"
+        | "EVAL" | "EVALSHA" | "EVAL_RO" | "EVALSHA_RO" | "WAIT" | "RESET" | "LOLWUT"
+        | "MEMORY" | "LATENCY" | "CLUSTER" | "REPLICAOF" | "SLAVEOF" | "MULTI" | "EXEC"
+        | "DISCARD" | "UNWATCH" | "SCAN" | "RANDOMKEY" | "KEYS" | "LASTSAVE" | "SAVE"
+        | "BGSAVE" | "BGREWRITEAOF" | "SHUTDOWN" | "REPLCONF" => Vec::new(),
+
+        // Every argument after the command name is a key.
+        "MGET" | "DEL" | "UNLINK" | "EXISTS" | "WATCH" | "TOUCH" | "SUNION" | "SINTER"
+        | "SDIFF" | "PFCOUNT" | "PFMERGE" => args.iter().skip(1).collect(),
+
+        // Alternating key/value pairs: k v k v ...
+        "MSET" | "MSETNX" => args.iter().skip(1).step_by(2).collect(),
+
+        // Source and destination keys.
+        "RENAME" | "RENAMENX" | "SMOVE" | "COPY" | "LMOVE" | "BLMOVE" | "RPOPLPUSH"
+        | "BRPOPLPUSH" | "GEOSEARCHSTORE" | "ZRANGESTORE" => args.iter().skip(1).take(2).collect(),
+
+        // Default: the first argument is the key, if present.
+        _ => args.get(1).into_iter().collect(),
+    }
+}
+
 /// Whether `username`'s key patterns cover every key (no per-key check needed).
 pub fn user_has_all_keys(username: &str) -> bool {
     match ACL_USERS.lock() {
@@ -613,6 +646,38 @@ static ACL_USERS: std::sync::LazyLock<Mutex<HashMap<String, AclUserEntry>>> =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_command_keys() {
+        let mk = |parts: &[&str]| {
+            parts.iter().map(|s| Bytes::from(s.to_string())).collect::<Vec<_>>()
+        };
+
+        // Every arg is a key.
+        let args = mk(&["MGET", "a", "b", "c"]);
+        assert_eq!(command_keys("MGET", &args).len(), 3);
+
+        // Alternating key/value.
+        let args = mk(&["MSET", "k1", "v1", "k2", "v2"]);
+        let keys = command_keys("MSET", &args);
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].as_ref(), b"k1");
+        assert_eq!(keys[1].as_ref(), b"k2");
+
+        // Source + destination.
+        let args = mk(&["RENAME", "src", "dst"]);
+        assert_eq!(command_keys("RENAME", &args).len(), 2);
+
+        // No-key command: the channel is not treated as a key.
+        let args = mk(&["PUBLISH", "chan", "msg"]);
+        assert!(command_keys("PUBLISH", &args).is_empty());
+
+        // Default: first argument is the key.
+        let args = mk(&["GET", "mykey"]);
+        let keys = command_keys("GET", &args);
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].as_ref(), b"mykey");
+    }
 
     #[test]
     fn test_constant_time_eq() {

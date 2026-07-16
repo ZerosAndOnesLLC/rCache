@@ -34,6 +34,9 @@ pub struct Config {
     pub slowlog_log_slower_than: i64,
     /// Maximum number of slow log entries to keep.
     pub slowlog_max_len: usize,
+    /// Protected mode: when enabled and no authentication is configured, only
+    /// loopback clients are accepted. Mirrors Redis's protected-mode default.
+    pub protected_mode: bool,
 }
 
 impl Default for Config {
@@ -62,6 +65,7 @@ impl Default for Config {
             compression_enabled: false,
             slowlog_log_slower_than: 10000,
             slowlog_max_len: 128,
+            protected_mode: true,
         }
     }
 }
@@ -155,6 +159,12 @@ impl Config {
                     i += 1;
                     if i < args.len() {
                         config.aof_enabled = args[i] == "yes";
+                    }
+                }
+                "--protected-mode" => {
+                    i += 1;
+                    if i < args.len() {
+                        config.protected_mode = args[i] == "yes";
                     }
                 }
                 "--appendfilename" => {

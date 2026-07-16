@@ -198,6 +198,9 @@ pub struct SharedState {
     pub slowlog_next_id: AtomicU64,
     /// Named namespaces (multi-tenancy).
     pub namespaces: Mutex<HashMap<String, Store>>,
+    /// Per-IP AUTH failure tracking for brute-force backoff that survives
+    /// reconnects: maps a peer IP to (consecutive failures, last-failure time).
+    pub auth_failures: Mutex<HashMap<std::net::IpAddr, (u32, Instant)>>,
     /// Client tracking state. A single mutex protects the forward index
     /// (client_id -> keys it tracks), the senders, and the reverse index
     /// (key -> client_ids interested in it). Consolidating into one mutex
@@ -315,6 +318,7 @@ impl Server {
             slowlog_next_id: AtomicU64::new(0),
             namespaces: Mutex::new(HashMap::new()),
             tracking: Mutex::new(TrackingState::default()),
+            auth_failures: Mutex::new(HashMap::new()),
         });
 
         // Start HTTP/REST API server if configured
@@ -367,6 +371,13 @@ impl Server {
                     };
 
                     let state = Arc::clone(&tls_state);
+
+                    // Protected mode: refuse non-loopback clients when no auth is set.
+                    if protected_mode_reject(&state, addr.ip()) {
+                        tracing::warn!("Protected mode: rejecting TLS connection from {}", addr);
+                        continue;
+                    }
+
                     let permit = match tls_semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
@@ -392,7 +403,7 @@ impl Server {
                             Ok(Ok(tls_stream)) => {
                                 tracing::debug!("New TLS connection from {} (client_id={})", addr, client_id);
                                 let stream = connection::MaybeTls::Tls(tls_stream);
-                                let mut conn = connection::Connection::new(stream, state.clone(), client_id);
+                                let mut conn = connection::Connection::new(stream, state.clone(), client_id, Some(addr.ip()));
                                 if let Err(e) = conn.handle().await {
                                     tracing::debug!("TLS connection {} error: {}", addr, e);
                                 }
@@ -415,6 +426,19 @@ impl Server {
         loop {
             let (socket, addr) = listener.accept().await?;
             let state = Arc::clone(&state);
+
+            // Protected mode: refuse non-loopback clients when no auth is set.
+            if protected_mode_reject(&state, addr.ip()) {
+                tracing::warn!("Protected mode: rejecting connection from {}", addr);
+                let mut socket = socket;
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let _ = socket.write_all(PROTECTED_MODE_ERROR).await;
+                    let _ = socket.shutdown().await;
+                });
+                continue;
+            }
+
             let permit = match semaphore.clone().try_acquire_owned() {
                 Ok(p) => p,
                 Err(_) => {
@@ -430,7 +454,7 @@ impl Server {
             tokio::spawn(async move {
                 tracing::debug!("New connection from {} (client_id={})", addr, client_id);
                 let stream = connection::MaybeTls::Plain(socket);
-                let mut conn = connection::Connection::new(stream, state.clone(), client_id);
+                let mut conn = connection::Connection::new(stream, state.clone(), client_id, Some(addr.ip()));
                 if let Err(e) = conn.handle().await {
                     tracing::debug!("Connection {} error: {}", addr, e);
                 }
@@ -440,6 +464,21 @@ impl Server {
             });
         }
     }
+}
+
+/// RESP error sent to a client rejected by protected mode.
+const PROTECTED_MODE_ERROR: &[u8] =
+    b"-DENIED rCache is running in protected mode because protected mode is enabled \
+and no authentication is configured. Connect from the loopback interface, set a \
+password (requirepass / ACL), or disable protected mode with '--protected-mode no'.\r\n";
+
+/// Whether a peer should be refused under protected mode: it is enabled, no
+/// authentication is configured, and the peer is not on the loopback interface.
+fn protected_mode_reject(state: &SharedState, ip: std::net::IpAddr) -> bool {
+    state.config.protected_mode
+        && state.config.requirepass.is_none()
+        && !crate::command::acl::any_password_required()
+        && !ip.is_loopback()
 }
 
 /// Build a TLS acceptor from PEM cert and key files.

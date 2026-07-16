@@ -401,6 +401,9 @@ pub fn cmd_getrange(ctx: &mut CommandContext) -> RespValue {
     let db = ctx.db();
     match db.get(&key) {
         Some(RedisObject::String(b)) => {
+            if b.is_empty() {
+                return RespValue::bulk_string(Bytes::new());
+            }
             let len = b.len() as i64;
             let s = if start < 0 { (len + start).max(0) } else { start } as usize;
             let e = if end < 0 { (len + end).max(0) } else { end.min(len - 1) } as usize;

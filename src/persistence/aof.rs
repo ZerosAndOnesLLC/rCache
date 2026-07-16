@@ -43,10 +43,10 @@ impl FsyncMode {
 impl AofWriter {
     /// Open or create the AOF file for appending.
     pub fn open(path: &Path, fsync_mode: FsyncMode) -> io::Result<Self> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
+        let mut opts = OpenOptions::new();
+        opts.create(true).append(true);
+        crate::persistence::util::with_secure_mode(&mut opts);
+        let file = opts.open(path)?;
 
         Ok(Self {
             path: path.to_path_buf(),
@@ -90,9 +90,8 @@ impl AofWriter {
     /// Rewrite the AOF from the current store state.
     /// Creates a new temp file, writes all current data, then replaces the old file.
     pub fn rewrite(&mut self, store: &Store) -> io::Result<()> {
-        let temp_path = self.path.with_extension("aof.tmp");
+        let (file, temp_path) = crate::persistence::util::create_temp_file(&self.path)?;
         {
-            let file = File::create(&temp_path)?;
             let mut writer = BufWriter::new(file);
 
             let now = Instant::now();
@@ -216,10 +215,10 @@ impl AofWriter {
         std::fs::rename(&temp_path, &self.path)?;
 
         // Re-open the file for appending
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut opts = OpenOptions::new();
+        opts.create(true).append(true);
+        crate::persistence::util::with_secure_mode(&mut opts);
+        let file = opts.open(&self.path)?;
         self.writer = BufWriter::new(file);
 
         Ok(())
