@@ -381,8 +381,15 @@ impl Server {
                     state.connected_clients.fetch_add(1, Ordering::Relaxed);
 
                     tokio::spawn(async move {
-                        match acceptor.accept(socket).await {
-                            Ok(tls_stream) => {
+                        // Bound the TLS handshake so a client that completes TCP
+                        // but stalls the handshake can't hold a client slot open.
+                        let handshake = tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            acceptor.accept(socket),
+                        )
+                        .await;
+                        match handshake {
+                            Ok(Ok(tls_stream)) => {
                                 tracing::debug!("New TLS connection from {} (client_id={})", addr, client_id);
                                 let stream = connection::MaybeTls::Tls(tls_stream);
                                 let mut conn = connection::Connection::new(stream, state.clone(), client_id);
@@ -390,8 +397,11 @@ impl Server {
                                     tracing::debug!("TLS connection {} error: {}", addr, e);
                                 }
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 tracing::debug!("TLS handshake failed from {}: {}", addr, e);
+                            }
+                            Err(_) => {
+                                tracing::debug!("TLS handshake timed out from {}", addr);
                             }
                         }
                         state.connected_clients.fetch_sub(1, Ordering::Relaxed);

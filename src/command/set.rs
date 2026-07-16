@@ -4,6 +4,11 @@ use crate::protocol::RespValue;
 use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
+/// Upper bound on the magnitude of a negative `count` for SRANDMEMBER /
+/// ZRANDMEMBER / HRANDFIELD (the with-duplicates form), preventing an
+/// attacker from forcing a multi-billion-element allocation.
+const MAX_RAND_COUNT: u64 = 1_000_000;
+
 fn get_set<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a HashSet<Bytes>>, RespValue> {
     match ctx.db().get(key) {
         Some(RedisObject::Set(s)) => Ok(Some(s)),
@@ -154,8 +159,13 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
                     RespValue::array(members)
                 }
                 Some(n) => {
-                    // Negative count: allow duplicates
-                    let n = (-n) as usize;
+                    // Negative count: allow duplicates. Cap the magnitude (and
+                    // guard i64::MIN's negation) so a huge count can't allocate
+                    // billions of elements.
+                    let n = match n.checked_neg() {
+                        Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
+                        _ => return RespValue::error("ERR count value is out of range"),
+                    };
                     use rand::seq::SliceRandom;
                     let items: Vec<&Bytes> = set.iter().collect();
                     let members: Vec<RespValue> = (0..n)

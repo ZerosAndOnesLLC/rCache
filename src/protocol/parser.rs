@@ -16,6 +16,11 @@ const MAX_BULK_LEN: usize = 512 * 1024 * 1024;
 const MAX_MULTIBULK_LEN: usize = 1_048_576;
 /// Maximum nesting depth for aggregates — guards against stack overflow.
 const MAX_DEPTH: u32 = 32;
+/// Upper bound on how many aggregate slots to pre-reserve before any element
+/// bytes are seen. The declared length is still validated against
+/// `MAX_MULTIBULK_LEN`, but the container grows lazily from here so a tiny
+/// message can't force a huge (or deeply nested, amplified) up-front allocation.
+const PREALLOC_CAP: usize = 1024;
 
 impl Parser {
     /// Try to parse one complete RESP value from the buffer.
@@ -127,7 +132,7 @@ impl Parser {
             return Err(ParseError::Invalid("multibulk length out of range".to_string()));
         }
 
-        let mut items = Vec::with_capacity(len);
+        let mut items = Vec::with_capacity(len.min(PREALLOC_CAP));
 
         for _ in 0..len {
             let rest = buf.get(consumed..).ok_or(ParseError::Incomplete)?;
@@ -230,7 +235,7 @@ impl Parser {
         if len > MAX_MULTIBULK_LEN {
             return Err(ParseError::Invalid("map length out of range".to_string()));
         }
-        let mut entries = Vec::with_capacity(len);
+        let mut entries = Vec::with_capacity(len.min(PREALLOC_CAP));
 
         for _ in 0..len {
             let rest = buf.get(consumed..).ok_or(ParseError::Incomplete)?;
@@ -262,7 +267,7 @@ impl Parser {
         if len > MAX_MULTIBULK_LEN {
             return Err(ParseError::Invalid("set length out of range".to_string()));
         }
-        let mut items = Vec::with_capacity(len);
+        let mut items = Vec::with_capacity(len.min(PREALLOC_CAP));
 
         for _ in 0..len {
             let rest = buf.get(consumed..).ok_or(ParseError::Incomplete)?;
@@ -289,7 +294,7 @@ impl Parser {
         if len > MAX_MULTIBULK_LEN {
             return Err(ParseError::Invalid("push length out of range".to_string()));
         }
-        let mut items = Vec::with_capacity(len);
+        let mut items = Vec::with_capacity(len.min(PREALLOC_CAP));
 
         for _ in 0..len {
             let rest = buf.get(consumed..).ok_or(ParseError::Incomplete)?;

@@ -4,6 +4,10 @@ use crate::storage::types::SortedSetData;
 use crate::storage::RedisObject;
 use super::registry::CommandContext;
 
+/// Upper bound on the magnitude of a negative ZRANDMEMBER `count` (the
+/// with-duplicates form), preventing an unbounded allocation.
+const MAX_RAND_COUNT: u64 = 1_000_000;
+
 fn get_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a SortedSetData>, RespValue> {
     match ctx.db().get(key) {
         Some(RedisObject::SortedSet(z)) => Ok(Some(z)),
@@ -588,7 +592,12 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
                     }
                 }
                 Some(n) => {
-                    let n = (-n) as usize;
+                    // Negative count allows duplicates; cap the magnitude and
+                    // guard i64::MIN to avoid an unbounded allocation.
+                    let n = match n.checked_neg() {
+                        Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
+                        _ => return RespValue::error("ERR count value is out of range"),
+                    };
                     use rand::seq::SliceRandom;
                     let all: Vec<(Bytes, f64)> = zset.range_by_index(0, -1);
                     let mut items = Vec::new();
