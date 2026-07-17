@@ -191,6 +191,15 @@ impl Connection {
                     self.stream.write_all(&data).await?;
                 }
 
+                // A command just processed (e.g. SUBSCRIBE) may have put us into
+                // pub/sub mode. Re-enter the loop so the next iteration waits on
+                // the pub/sub channel via select!, rather than blocking on the
+                // socket read below — otherwise a published message sits unread
+                // in pubsub_rx until the client happens to send more data.
+                if !self.subscribed_channels.is_empty() || !self.subscribed_patterns.is_empty() {
+                    continue;
+                }
+
                 // Read more data from the socket, bounded by an idle timeout.
                 let n = match tokio::time::timeout(
                     READ_IDLE_TIMEOUT,
