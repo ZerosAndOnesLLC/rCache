@@ -525,13 +525,11 @@ fn build_tls_acceptor(
     cert_path: &str,
     key_path: &str,
 ) -> Result<tokio_rustls::TlsAcceptor, Box<dyn std::error::Error>> {
-    use rustls::pki_types::PrivateKeyDer;
-    use std::io::BufReader;
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-    let cert_file = std::fs::File::open(cert_path)
-        .map_err(|e| format!("Failed to open TLS cert file '{}': {}", cert_path, e))?;
-    let mut cert_reader = BufReader::new(cert_file);
-    let certs: Vec<_> = rustls_pemfile::certs(&mut cert_reader)
+    let certs: Vec<CertificateDer> = CertificateDer::pem_file_iter(cert_path)
+        .map_err(|e| format!("Failed to open TLS cert file '{}': {}", cert_path, e))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("Failed to parse TLS certs: {}", e))?;
 
@@ -539,13 +537,8 @@ fn build_tls_acceptor(
         return Err("No certificates found in TLS cert file".into());
     }
 
-    let key_file = std::fs::File::open(key_path)
-        .map_err(|e| format!("Failed to open TLS key file '{}': {}", key_path, e))?;
-    let mut key_reader = BufReader::new(key_file);
-
-    let key: PrivateKeyDer = rustls_pemfile::private_key(&mut key_reader)
-        .map_err(|e| format!("Failed to parse TLS key: {}", e))?
-        .ok_or("No private key found in TLS key file")?;
+    let key = PrivateKeyDer::from_pem_file(key_path)
+        .map_err(|e| format!("Failed to load TLS key from '{}': {}", key_path, e))?;
 
     // Build a server config restricted to TLS 1.2 and 1.3. rustls 0.23's default
     // crypto provider already excludes weak ciphers; pinning protocol versions

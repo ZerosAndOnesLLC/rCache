@@ -3,6 +3,7 @@
 mod command;
 pub mod compression;
 mod config;
+mod hex;
 mod http;
 pub mod persistence;
 mod protocol;

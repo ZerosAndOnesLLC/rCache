@@ -267,13 +267,13 @@ impl Database {
     /// Returns the number of keys deleted.
     pub fn expire_cycle(&mut self, sample_size: usize) -> usize {
         use rand::seq::IteratorRandom;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut deleted = 0;
 
         let expired_keys: Vec<Bytes> = self
             .expires
             .iter()
-            .choose_multiple(&mut rng, sample_size)
+            .sample(&mut rng, sample_size)
             .into_iter()
             .filter(|(_, expire)| Instant::now() >= **expire)
             .map(|(key, _)| key.clone())
@@ -318,7 +318,7 @@ impl Database {
     /// Get a random key.
     pub fn random_key(&mut self) -> Option<Bytes> {
         use rand::seq::IteratorRandom;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         loop {
             let key = self.data.keys().choose(&mut rng)?.clone();
             if self.is_expired(&key) {
@@ -481,7 +481,7 @@ impl Database {
     /// Update the LFU counter for a key with configurable parameters.
     /// Applies time-based decay first, then probabilistic increment.
     pub fn touch_lfu_with_params(&mut self, key: &Bytes, lfu_log_factor: u64, lfu_decay_time: u64) {
-        use rand::Rng;
+        use rand::RngExt;
 
         let now_minutes = current_minutes();
         let entry = self
@@ -508,7 +508,7 @@ impl Database {
         // Probabilistic increment: probability = 1 / (counter * lfu_log_factor + 1)
         if entry.counter < 255 {
             let p = 1.0 / ((entry.counter as f64) * (lfu_log_factor as f64) + 1.0);
-            let r: f64 = rand::thread_rng().r#gen();
+            let r: f64 = rand::rng().random();
             if r < p {
                 entry.counter = entry.counter.saturating_add(1);
             }

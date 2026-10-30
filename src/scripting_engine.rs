@@ -9,7 +9,7 @@ use crate::storage::Store;
 /// with the EVALSHA command (Redis clients send 40-char hex SHA-1 digests).
 fn sha1_hex(script: &str) -> String {
     use sha1::{Digest, Sha1};
-    format!("{:x}", Sha1::digest(script.as_bytes()))
+    crate::hex::encode(&Sha1::digest(script.as_bytes()))
 }
 
 /// The script cache: maps SHA1 hex -> script source.
@@ -201,14 +201,17 @@ pub fn execute_script(
 
     let lua = Lua::new();
 
-    // Bound the VM's memory so a script cannot exhaust host RAM.
-    let _ = lua.set_memory_limit(SCRIPT_MEMORY_LIMIT);
+    // Bound the VM's memory so a script cannot exhaust host RAM. Fail closed:
+    // never run a script without its limits in place.
+    if let Err(e) = lua.set_memory_limit(SCRIPT_MEMORY_LIMIT) {
+        return RespValue::error(format!("ERR failed to set script memory limit: {}", e));
+    }
 
     // Abort the script if it runs past its wall-clock budget. The hook fires
     // every N instructions; returning an error unwinds the Lua call.
     let deadline = std::time::Duration::from_millis(SCRIPT_TIMEOUT_MS);
     let started = std::time::Instant::now();
-    lua.set_hook(
+    if let Err(e) = lua.set_hook(
         mlua::HookTriggers::new().every_nth_instruction(100_000),
         move |_lua, _debug| {
             if started.elapsed() > deadline {
@@ -219,7 +222,9 @@ pub fn execute_script(
                 Ok(mlua::VmState::Continue)
             }
         },
-    );
+    ) {
+        return RespValue::error(format!("ERR failed to set script time limit: {}", e));
+    }
 
     // Set up the sandbox: remove dangerous globals
     let sandbox_result = lua.scope(|_scope| {

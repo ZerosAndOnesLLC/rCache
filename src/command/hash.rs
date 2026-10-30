@@ -299,7 +299,7 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
             }
 
             use rand::seq::IteratorRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             match count {
                 None => {
@@ -310,7 +310,7 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
                     let n = n as usize;
                     let fields: Vec<(Bytes, Bytes)> = hash
                         .iter()
-                        .choose_multiple(&mut rng, n.min(hash.len()))
+                        .sample(&mut rng, n.min(hash.len()))
                         .into_iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
@@ -337,7 +337,7 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
                         Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
                         _ => return RespValue::error("ERR count value is out of range"),
                     };
-                    use rand::seq::SliceRandom;
+                    use rand::seq::IndexedRandom;
                     let entries: Vec<(Bytes, Bytes)> =
                         hash.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                     let mut items = Vec::new();

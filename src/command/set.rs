@@ -160,7 +160,7 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
             }
 
             use rand::seq::IteratorRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             match count {
                 None => {
@@ -171,7 +171,7 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
                     let n = n as usize;
                     let members: Vec<RespValue> = set
                         .iter()
-                        .choose_multiple(&mut rng, n.min(set.len()))
+                        .sample(&mut rng, n.min(set.len()))
                         .into_iter()
                         .map(|m| RespValue::bulk_string(m.clone()))
                         .collect();
@@ -185,7 +185,7 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
                         Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
                         _ => return RespValue::error("ERR count value is out of range"),
                     };
-                    use rand::seq::SliceRandom;
+                    use rand::seq::IndexedRandom;
                     let items: Vec<&Bytes> = set.iter().collect();
                     let members: Vec<RespValue> = (0..n)
                         .map(|_| RespValue::bulk_string((*items.choose(&mut rng).unwrap()).clone()))
@@ -227,7 +227,7 @@ pub fn cmd_spop(ctx: &mut CommandContext) -> RespValue {
             }
 
             use rand::seq::IteratorRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             match count {
                 None => {
@@ -239,7 +239,7 @@ pub fn cmd_spop(ctx: &mut CommandContext) -> RespValue {
                 Some(n) => {
                     let to_pop: Vec<Bytes> = set
                         .iter()
-                        .choose_multiple(&mut rng, n.min(set.len()))
+                        .sample(&mut rng, n.min(set.len()))
                         .into_iter()
                         .cloned()
                         .collect();

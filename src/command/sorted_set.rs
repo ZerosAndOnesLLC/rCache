@@ -618,7 +618,7 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
             }
 
             use rand::seq::IteratorRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             match count {
                 None => {
@@ -630,7 +630,7 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
                     let all: Vec<(Bytes, f64)> = zset.range_by_index(0, -1);
                     let selected: Vec<(Bytes, f64)> = all
                         .iter()
-                        .choose_multiple(&mut rng, n.min(all.len()))
+                        .sample(&mut rng, n.min(all.len()))
                         .into_iter()
                         .cloned()
                         .collect();
@@ -657,7 +657,7 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
                         Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
                         _ => return RespValue::error("ERR count value is out of range"),
                     };
-                    use rand::seq::SliceRandom;
+                    use rand::seq::IndexedRandom;
                     let all: Vec<(Bytes, f64)> = zset.range_by_index(0, -1);
                     let mut items = Vec::new();
                     for _ in 0..n {

@@ -113,8 +113,8 @@ impl Store {
         lfu_log_factor: u64,
         lfu_decay_time: u64,
     ) -> bool {
-        use rand::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
+        use rand::seq::IndexedRandom;
+        let mut rng = rand::rng();
 
         match policy {
             "noeviction" => false,
@@ -156,8 +156,8 @@ impl Store {
 
     /// Evict the least recently used key by sampling.
     fn evict_lru(&mut self, samples: usize, volatile_only: bool) -> bool {
-        use rand::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
+        use rand::seq::IndexedRandom;
+        let mut rng = rand::rng();
 
         let mut best_key: Option<Bytes> = None;
         let mut best_lru = u64::MAX;
@@ -172,7 +172,7 @@ impl Store {
             if candidates.is_empty() {
                 continue;
             }
-            let sampled: Vec<&Bytes> = candidates.choose_multiple(&mut rng, samples).collect();
+            let sampled: Vec<&Bytes> = candidates.sample(&mut rng, samples).collect();
             for key in sampled {
                 let lru = db.lru_of(key).unwrap_or(0);
                 if lru < best_lru {
@@ -193,8 +193,8 @@ impl Store {
 
     /// Evict the key with the shortest TTL by sampling.
     fn evict_volatile_ttl(&mut self, samples: usize) -> bool {
-        use rand::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
+        use rand::seq::IndexedRandom;
+        let mut rng = rand::rng();
 
         let mut best_key: Option<Bytes> = None;
         let mut best_ttl = std::time::Duration::MAX;
@@ -205,7 +205,7 @@ impl Store {
             if vkeys.is_empty() {
                 continue;
             }
-            let sampled: Vec<&Bytes> = vkeys.choose_multiple(&mut rng, samples).collect();
+            let sampled: Vec<&Bytes> = vkeys.sample(&mut rng, samples).collect();
             for key in sampled {
                 if let Some(ttl) = db.time_to_live(key) {
                     if ttl < best_ttl {
@@ -240,8 +240,8 @@ impl Store {
         lfu_log_factor: u64,
         lfu_decay_time: u64,
     ) -> bool {
-        use rand::seq::SliceRandom;
-        let mut rng = rand::thread_rng();
+        use rand::seq::IndexedRandom;
+        let mut rng = rand::rng();
 
         // Sample keys and get their LFU counters (applying decay via touch_lfu_with_params)
         let mut sampled_entries: Vec<(Bytes, u8, usize)> = Vec::new();
@@ -255,10 +255,7 @@ impl Store {
             if candidates.is_empty() {
                 continue;
             }
-            let chosen: Vec<Bytes> = candidates
-                .choose_multiple(&mut rng, samples)
-                .cloned()
-                .collect();
+            let chosen: Vec<Bytes> = candidates.sample(&mut rng, samples).cloned().collect();
             for key in chosen {
                 // Touch to apply decay before reading the counter
                 db.touch_lfu_with_params(&key, lfu_log_factor, lfu_decay_time);

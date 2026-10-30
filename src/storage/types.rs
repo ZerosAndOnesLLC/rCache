@@ -347,7 +347,7 @@ impl SortedSetData {
     /// Get a random member.
     pub fn random_member(&self) -> Option<(&Bytes, f64)> {
         use rand::seq::IteratorRandom;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         self.members.iter().choose(&mut rng).map(|(k, &v)| (k, v))
     }
 }

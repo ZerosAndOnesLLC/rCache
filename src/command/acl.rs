@@ -241,7 +241,7 @@ fn cmd_acl_setuser(ctx: &mut CommandContext) -> RespValue {
                         return RespValue::error("ERR password cannot be empty");
                     }
                     use sha2::{Digest, Sha256};
-                    let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
+                    let hash = crate::hex::encode(&Sha256::digest(pass.as_bytes()));
                     if !user.passwords.contains(&hash) {
                         user.passwords.push(hash);
                     }
@@ -254,7 +254,7 @@ fn cmd_acl_setuser(ctx: &mut CommandContext) -> RespValue {
                         return RespValue::error("ERR password cannot be empty");
                     }
                     use sha2::{Digest, Sha256};
-                    let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
+                    let hash = crate::hex::encode(&Sha256::digest(pass.as_bytes()));
                     user.passwords.retain(|p| p != &hash);
                 }
                 _ if rule.starts_with("+@") => {
@@ -424,10 +424,10 @@ fn cmd_acl_genpass(ctx: &mut CommandContext) -> RespValue {
     };
 
     let bytes_needed = bits.div_ceil(8);
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let random_bytes: Vec<u8> = (0..bytes_needed).map(|_| rng.r#gen()).collect();
-    let hex: String = random_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let random_bytes: Vec<u8> = (0..bytes_needed).map(|_| rng.random()).collect();
+    let hex = crate::hex::encode(&random_bytes);
     // Truncate to the requested number of hex chars (bits / 4)
     let hex_chars = bits / 4;
     let result = if hex.len() > hex_chars {
@@ -510,7 +510,7 @@ pub fn init_default_password(requirepass: Option<&str>) {
         && let Some(def) = users.get_mut("default")
     {
         use sha2::{Digest, Sha256};
-        let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
+        let hash = crate::hex::encode(&Sha256::digest(pass.as_bytes()));
         if !def.passwords.contains(&hash) {
             def.passwords.push(hash);
         }
@@ -530,7 +530,7 @@ pub fn check_password(username: &str, password: &str) -> AuthOutcome {
                     return AuthOutcome::Ok;
                 }
                 use sha2::{Digest, Sha256};
-                let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
+                let hash = crate::hex::encode(&Sha256::digest(password.as_bytes()));
                 if u.passwords
                     .iter()
                     .any(|p| constant_time_eq(p.as_bytes(), hash.as_bytes()))
@@ -688,7 +688,7 @@ pub fn any_password_required() -> bool {
 /// matches, if any.
 pub fn http_authenticate(token: &str) -> Option<String> {
     use sha2::{Digest, Sha256};
-    let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+    let hash = crate::hex::encode(&Sha256::digest(token.as_bytes()));
     let users = ACL_USERS.lock().ok()?;
     users
         .iter()
