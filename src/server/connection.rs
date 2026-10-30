@@ -1,17 +1,17 @@
+use bytes::{Bytes, BytesMut};
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
-use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-use crate::protocol::{Parser, RespValue};
-use crate::command::CommandContext;
-use crate::storage::db::glob_match;
 use super::SharedState;
+use crate::command::CommandContext;
+use crate::protocol::{Parser, RespValue};
+use crate::storage::db::glob_match;
 
 /// Maximum size of a connection's unprocessed query buffer. A single bulk
 /// argument may be up to 512 MB (the parser's `MAX_BULK_LEN`), so this ceiling
@@ -29,7 +29,7 @@ const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 /// A stream that may or may not be TLS-wrapped.
 pub enum MaybeTls {
     Plain(TcpStream),
-    Tls(tokio_rustls::server::TlsStream<TcpStream>),
+    Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
 }
 
 impl AsyncRead for MaybeTls {
@@ -144,7 +144,8 @@ impl Connection {
 
     pub async fn handle(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         loop {
-            let in_pubsub = !self.subscribed_channels.is_empty() || !self.subscribed_patterns.is_empty();
+            let in_pubsub =
+                !self.subscribed_channels.is_empty() || !self.subscribed_patterns.is_empty();
 
             if in_pubsub {
                 // In pub/sub mode: select between incoming commands and pub/sub messages
@@ -224,7 +225,8 @@ impl Connection {
                     return Ok(());
                 }
                 if self.buffer.len() > MAX_QUERY_BUFFER {
-                    let err = RespValue::error("ERR Protocol error: unbalanced/too-large query buffer");
+                    let err =
+                        RespValue::error("ERR Protocol error: unbalanced/too-large query buffer");
                     let _ = self.stream.write_all(&err.serialize()).await;
                     self.cleanup_pubsub().await;
                     return Ok(());
@@ -243,7 +245,9 @@ impl Connection {
         }
     }
 
-    async fn try_process_command(&mut self) -> Result<Option<RespValue>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn try_process_command(
+        &mut self,
+    ) -> Result<Option<RespValue>, Box<dyn std::error::Error + Send + Sync>> {
         if self.buffer.is_empty() {
             return Ok(None);
         }
@@ -254,12 +258,10 @@ impl Connection {
 
                 // Extract command name for latency tracking
                 let cmd_name = match &value {
-                    RespValue::Array(items) if !items.is_empty() => {
-                        match &items[0] {
-                            RespValue::BulkString(b) => String::from_utf8_lossy(b).to_uppercase(),
-                            other => other.to_string_lossy().to_uppercase().into(),
-                        }
-                    }
+                    RespValue::Array(items) if !items.is_empty() => match &items[0] {
+                        RespValue::BulkString(b) => String::from_utf8_lossy(b).to_uppercase(),
+                        other => other.to_string_lossy().to_uppercase(),
+                    },
                     _ => "UNKNOWN".into(),
                 };
 
@@ -333,24 +335,27 @@ impl Connection {
                     }
                 }
 
-                self.state.commands_processed.fetch_add(1, Ordering::Relaxed);
+                self.state
+                    .commands_processed
+                    .fetch_add(1, Ordering::Relaxed);
                 Ok(Some(response))
             }
             Err(crate::protocol::parser::ParseError::Incomplete) => Ok(None),
-            Err(crate::protocol::parser::ParseError::Invalid(msg)) => {
-                Ok(Some(RespValue::error(format!("ERR protocol error: {}", msg))))
-            }
+            Err(crate::protocol::parser::ParseError::Invalid(msg)) => Ok(Some(RespValue::error(
+                format!("ERR protocol error: {}", msg),
+            ))),
         }
     }
 
     async fn execute_command(&mut self, value: RespValue) -> RespValue {
         let args = match value {
-            RespValue::Array(items) => {
-                items.into_iter().map(|v| match v {
+            RespValue::Array(items) => items
+                .into_iter()
+                .map(|v| match v {
                     RespValue::BulkString(b) => b,
                     other => Bytes::from(other.to_string_lossy()),
-                }).collect::<Vec<_>>()
-            }
+                })
+                .collect::<Vec<_>>(),
             _ => return RespValue::error("ERR invalid command format"),
         };
 
@@ -417,7 +422,8 @@ impl Connection {
 
         // ACL WHOAMI reflects the actual authenticated user (the command handler
         // has no connection state, so it is answered here).
-        if cmd_name == "ACL" && args.len() >= 2
+        if cmd_name == "ACL"
+            && args.len() >= 2
             && String::from_utf8_lossy(&args[1]).eq_ignore_ascii_case("WHOAMI")
         {
             return RespValue::bulk_string(Bytes::from(self.auth_username.clone()));
@@ -473,13 +479,14 @@ impl Connection {
         }
 
         // In pub/sub mode, only SUBSCRIBE/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE/PING/RESET/QUIT are allowed
-        if !self.subscribed_channels.is_empty() || !self.subscribed_patterns.is_empty() {
-            if cmd_name != "PING" && cmd_name != "RESET" {
-                return RespValue::error(format!(
-                    "ERR Can't execute '{}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context",
-                    cmd_name.to_lowercase()
-                ));
-            }
+        if (!self.subscribed_channels.is_empty() || !self.subscribed_patterns.is_empty())
+            && cmd_name != "PING"
+            && cmd_name != "RESET"
+        {
+            return RespValue::error(format!(
+                "ERR Can't execute '{}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context",
+                cmd_name.to_lowercase()
+            ));
         }
 
         // Transaction commands
@@ -555,7 +562,11 @@ impl Connection {
                     Ok(2) => 2u8,
                     Ok(3) => 3u8,
                     Ok(_) => return RespValue::error("NOPROTO unsupported protocol version"),
-                    Err(_) => return RespValue::error("ERR Protocol version is not an integer or out of range"),
+                    Err(_) => {
+                        return RespValue::error(
+                            "ERR Protocol version is not an integer or out of range",
+                        );
+                    }
                 }
             } else {
                 self.resp_version
@@ -583,7 +594,9 @@ impl Connection {
                         self.client_name = Some(String::from_utf8_lossy(&args[i + 1]).to_string());
                         i += 2;
                     }
-                    _ => { i += 1; }
+                    _ => {
+                        i += 1;
+                    }
                 }
             }
 
@@ -627,7 +640,11 @@ impl Connection {
         let cmd_name_for_aof = cmd_name.clone();
         let is_write = crate::persistence::aof::is_write_command(&cmd_name);
         let need_args_copy = is_write || self.tracking_enabled;
-        let args_for_aof: Vec<Bytes> = if need_args_copy { args.clone() } else { Vec::new() };
+        let args_for_aof: Vec<Bytes> = if need_args_copy {
+            args.clone()
+        } else {
+            Vec::new()
+        };
 
         // Execute command with store lock
         let mut store = self.state.store.lock().await;
@@ -675,10 +692,10 @@ impl Connection {
         if is_write {
             if !matches!(result, RespValue::Error(_)) {
                 let mut aof = self.state.aof_writer.lock().await;
-                if let Some(writer) = aof.as_mut() {
-                    if let Err(e) = writer.append(&args_for_aof) {
-                        tracing::error!("AOF write error: {}", e);
-                    }
+                if let Some(writer) = aof.as_mut()
+                    && let Err(e) = writer.append(&args_for_aof)
+                {
+                    tracing::error!("AOF write error: {}", e);
                 }
             }
 
@@ -695,9 +712,7 @@ impl Connection {
                 if !targets.is_empty() {
                     let invalidation = RespValue::Push(vec![
                         RespValue::bulk_string(Bytes::from("invalidate")),
-                        RespValue::array(vec![
-                            RespValue::bulk_string(mutated_key.clone()),
-                        ]),
+                        RespValue::array(vec![RespValue::bulk_string(mutated_key.clone())]),
                     ]);
                     for sender in &targets {
                         let _ = sender.send(invalidation.clone());
@@ -712,13 +727,34 @@ impl Connection {
     /// Build the HELLO response, using Map for RESP3 and flat Array for RESP2.
     fn build_hello_response(&self, proto: u8) -> RespValue {
         let entries = vec![
-            (RespValue::bulk_string(Bytes::from("server")), RespValue::bulk_string(Bytes::from("rcache"))),
-            (RespValue::bulk_string(Bytes::from("version")), RespValue::bulk_string(Bytes::from(env!("CARGO_PKG_VERSION")))),
-            (RespValue::bulk_string(Bytes::from("proto")), RespValue::integer(proto as i64)),
-            (RespValue::bulk_string(Bytes::from("id")), RespValue::integer(self.client_id as i64)),
-            (RespValue::bulk_string(Bytes::from("mode")), RespValue::bulk_string(Bytes::from("standalone"))),
-            (RespValue::bulk_string(Bytes::from("role")), RespValue::bulk_string(Bytes::from("master"))),
-            (RespValue::bulk_string(Bytes::from("modules")), RespValue::array(vec![])),
+            (
+                RespValue::bulk_string(Bytes::from("server")),
+                RespValue::bulk_string(Bytes::from("rcache")),
+            ),
+            (
+                RespValue::bulk_string(Bytes::from("version")),
+                RespValue::bulk_string(Bytes::from(env!("CARGO_PKG_VERSION"))),
+            ),
+            (
+                RespValue::bulk_string(Bytes::from("proto")),
+                RespValue::integer(proto as i64),
+            ),
+            (
+                RespValue::bulk_string(Bytes::from("id")),
+                RespValue::integer(self.client_id as i64),
+            ),
+            (
+                RespValue::bulk_string(Bytes::from("mode")),
+                RespValue::bulk_string(Bytes::from("standalone")),
+            ),
+            (
+                RespValue::bulk_string(Bytes::from("role")),
+                RespValue::bulk_string(Bytes::from("master")),
+            ),
+            (
+                RespValue::bulk_string(Bytes::from("modules")),
+                RespValue::array(vec![]),
+            ),
         ];
 
         if proto == 3 {
@@ -787,9 +823,8 @@ impl Connection {
             }
             "LIST" => {
                 let namespaces = self.state.namespaces.lock().await;
-                let mut names: Vec<RespValue> = vec![
-                    RespValue::bulk_string(Bytes::from("default")),
-                ];
+                let mut names: Vec<RespValue> =
+                    vec![RespValue::bulk_string(Bytes::from("default"))];
                 for name in namespaces.keys() {
                     names.push(RespValue::bulk_string(Bytes::from(name.clone())));
                 }
@@ -818,7 +853,10 @@ impl Connection {
             "INFO" => {
                 if args.len() < 3 {
                     // Info about current namespace
-                    let name = self.namespace.clone().unwrap_or_else(|| "default".to_string());
+                    let name = self
+                        .namespace
+                        .clone()
+                        .unwrap_or_else(|| "default".to_string());
                     return RespValue::array(vec![
                         RespValue::bulk_string(Bytes::from("name")),
                         RespValue::bulk_string(Bytes::from(name)),
@@ -837,7 +875,8 @@ impl Connection {
                 } else {
                     let namespaces = self.state.namespaces.lock().await;
                     if let Some(ns_store) = namespaces.get(&name) {
-                        let total_keys: usize = (0..ns_store.db_count()).map(|i| ns_store.db(i).len()).sum();
+                        let total_keys: usize =
+                            (0..ns_store.db_count()).map(|i| ns_store.db(i).len()).sum();
                         RespValue::array(vec![
                             RespValue::bulk_string(Bytes::from("name")),
                             RespValue::bulk_string(Bytes::from(name)),
@@ -897,10 +936,10 @@ impl Connection {
         self.authenticated = true;
         self.auth_username = username;
         // Clear this IP's accumulated failures on a successful auth.
-        if let Some(ip) = self.peer_ip {
-            if let Ok(mut map) = self.state.auth_failures.try_lock() {
-                map.remove(&ip);
-            }
+        if let Some(ip) = self.peer_ip
+            && let Ok(mut map) = self.state.auth_failures.try_lock()
+        {
+            map.remove(&ip);
         }
     }
 
@@ -915,7 +954,10 @@ impl Connection {
                 String::from_utf8_lossy(&args[2]).to_string(),
             )
         } else {
-            ("default".to_string(), String::from_utf8_lossy(&args[1]).to_string())
+            (
+                "default".to_string(),
+                String::from_utf8_lossy(&args[1]).to_string(),
+            )
         };
 
         if username == "default" {
@@ -925,7 +967,9 @@ impl Connection {
                     return RespValue::ok();
                 }
             } else {
-                return RespValue::error("ERR Client sent AUTH, but no password is set. Did you mean ACL SETUSER with >password?");
+                return RespValue::error(
+                    "ERR Client sent AUTH, but no password is set. Did you mean ACL SETUSER with >password?",
+                );
             }
         }
 
@@ -945,13 +989,12 @@ impl Connection {
         let username = String::from_utf8_lossy(username).to_string();
         let password = String::from_utf8_lossy(password).to_string();
 
-        if username == "default" {
-            if let Some(ref req_pass) = self.state.config.requirepass {
-                if crate::command::acl::verify_secret(&password, req_pass) {
-                    self.auth_success(username);
-                    return None;
-                }
-            }
+        if username == "default"
+            && let Some(ref req_pass) = self.state.config.requirepass
+            && crate::command::acl::verify_secret(&password, req_pass)
+        {
+            self.auth_success(username);
+            return None;
         }
 
         match crate::command::acl::check_password(&username, &password) {
@@ -961,7 +1004,9 @@ impl Connection {
             }
             _ => {
                 self.auth_backoff().await;
-                Some(RespValue::error("WRONGPASS invalid username-password pair or user is disabled."))
+                Some(RespValue::error(
+                    "WRONGPASS invalid username-password pair or user is disabled.",
+                ))
             }
         }
     }
@@ -980,7 +1025,8 @@ impl Connection {
             let mut pubsub = self.state.pubsub.lock().await;
             let tx = self.pubsub_tx.clone().unwrap();
             pubsub.subscribe(self.client_id, channel.clone(), tx);
-            let sub_count = pubsub.client_channel_count(self.client_id) + pubsub.client_pattern_count(self.client_id);
+            let sub_count = pubsub.client_channel_count(self.client_id)
+                + pubsub.client_pattern_count(self.client_id);
             drop(pubsub);
 
             responses.push(RespValue::array(vec![
@@ -1017,7 +1063,8 @@ impl Connection {
             self.subscribed_channels.remove(&channel);
             let mut pubsub = self.state.pubsub.lock().await;
             pubsub.unsubscribe(self.client_id, &channel);
-            let sub_count = pubsub.client_channel_count(self.client_id) + pubsub.client_pattern_count(self.client_id);
+            let sub_count = pubsub.client_channel_count(self.client_id)
+                + pubsub.client_pattern_count(self.client_id);
             drop(pubsub);
 
             responses.push(RespValue::array(vec![
@@ -1056,7 +1103,8 @@ impl Connection {
             let mut pubsub = self.state.pubsub.lock().await;
             let tx = self.pubsub_tx.clone().unwrap();
             pubsub.psubscribe(self.client_id, pattern.clone(), tx);
-            let sub_count = pubsub.client_channel_count(self.client_id) + pubsub.client_pattern_count(self.client_id);
+            let sub_count = pubsub.client_channel_count(self.client_id)
+                + pubsub.client_pattern_count(self.client_id);
             drop(pubsub);
 
             responses.push(RespValue::array(vec![
@@ -1090,7 +1138,8 @@ impl Connection {
             self.subscribed_patterns.remove(&pattern);
             let mut pubsub = self.state.pubsub.lock().await;
             pubsub.punsubscribe(self.client_id, &pattern);
-            let sub_count = pubsub.client_channel_count(self.client_id) + pubsub.client_pattern_count(self.client_id);
+            let sub_count = pubsub.client_channel_count(self.client_id)
+                + pubsub.client_pattern_count(self.client_id);
             drop(pubsub);
 
             responses.push(RespValue::array(vec![
@@ -1144,7 +1193,9 @@ impl Connection {
                     None
                 };
 
-                let channels: Vec<RespValue> = pubsub.channels.keys()
+                let channels: Vec<RespValue> = pubsub
+                    .channels
+                    .keys()
                     .filter(|ch| {
                         if let Some(ref pat) = pattern {
                             let ch_str = String::from_utf8_lossy(ch);
@@ -1161,9 +1212,7 @@ impl Connection {
                 let mut result = Vec::new();
                 for ch_name in &args[2..] {
                     result.push(RespValue::bulk_string(ch_name.clone()));
-                    let count = pubsub.channels.get(ch_name)
-                        .map(|s| s.len())
-                        .unwrap_or(0);
+                    let count = pubsub.channels.get(ch_name).map(|s| s.len()).unwrap_or(0);
                     result.push(RespValue::integer(count as i64));
                 }
                 RespValue::array(result)
@@ -1172,7 +1221,10 @@ impl Connection {
                 let count: usize = pubsub.patterns.values().map(|s| s.len()).sum();
                 RespValue::integer(count as i64)
             }
-            _ => RespValue::error(format!("ERR unknown subcommand or wrong number of arguments for 'pubsub|{}'", subcmd.to_lowercase())),
+            _ => RespValue::error(format!(
+                "ERR unknown subcommand or wrong number of arguments for 'pubsub|{}'",
+                subcmd.to_lowercase()
+            )),
         }
     }
 
@@ -1284,10 +1336,10 @@ fn compute_key_version(db: &mut crate::storage::Database, key: &Bytes) -> Option
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    if let Some(v) = db.key_version(key) {
-        if v != 0 {
-            return Some(v);
-        }
+    if let Some(v) = db.key_version(key)
+        && v != 0
+    {
+        return Some(v);
     }
 
     let obj = db.get(key)?;
@@ -1353,12 +1405,35 @@ fn compute_key_version(db: &mut crate::storage::Database, key: &Bytes) -> Option
 fn is_read_command(cmd: &str) -> bool {
     matches!(
         cmd,
-        "GET" | "MGET" | "HGET" | "HMGET" | "HGETALL" | "HKEYS" | "HVALS"
-            | "LRANGE" | "LINDEX" | "LLEN"
-            | "SISMEMBER" | "SMEMBERS" | "SCARD" | "SMISMEMBER"
-            | "ZSCORE" | "ZRANGE" | "ZRANK" | "ZCARD" | "ZRANGEBYSCORE"
-            | "XRANGE" | "XREVRANGE" | "XLEN"
-            | "JSON.GET" | "JSON.TYPE"
-            | "STRLEN" | "GETRANGE" | "EXISTS" | "TYPE" | "TTL" | "PTTL"
+        "GET"
+            | "MGET"
+            | "HGET"
+            | "HMGET"
+            | "HGETALL"
+            | "HKEYS"
+            | "HVALS"
+            | "LRANGE"
+            | "LINDEX"
+            | "LLEN"
+            | "SISMEMBER"
+            | "SMEMBERS"
+            | "SCARD"
+            | "SMISMEMBER"
+            | "ZSCORE"
+            | "ZRANGE"
+            | "ZRANK"
+            | "ZCARD"
+            | "ZRANGEBYSCORE"
+            | "XRANGE"
+            | "XREVRANGE"
+            | "XLEN"
+            | "JSON.GET"
+            | "JSON.TYPE"
+            | "STRLEN"
+            | "GETRANGE"
+            | "EXISTS"
+            | "TYPE"
+            | "TTL"
+            | "PTTL"
     )
 }

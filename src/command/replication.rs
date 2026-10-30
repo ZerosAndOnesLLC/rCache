@@ -1,5 +1,5 @@
-use crate::protocol::RespValue;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
 
 pub fn cmd_replicaof(_ctx: &mut CommandContext) -> RespValue {
     // Accept but no-op, return OK

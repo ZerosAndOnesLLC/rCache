@@ -42,7 +42,8 @@ impl CommandRegistry {
     }
 
     fn register(&mut self, name: &str, handler: CommandHandler, arity: i32) {
-        self.commands.insert(name.to_uppercase(), CommandEntry { handler, arity });
+        self.commands
+            .insert(name.to_uppercase(), CommandEntry { handler, arity });
     }
 
     pub fn execute(&self, ctx: &mut CommandContext) -> RespValue {
@@ -205,7 +206,11 @@ impl CommandRegistry {
         self.register("ZRANGE", super::sorted_set::cmd_zrange, -4);
         self.register("ZRANGEBYSCORE", super::sorted_set::cmd_zrangebyscore, -4);
         self.register("ZREVRANGE", super::sorted_set::cmd_zrevrange, -4);
-        self.register("ZREVRANGEBYSCORE", super::sorted_set::cmd_zrevrangebyscore, -4);
+        self.register(
+            "ZREVRANGEBYSCORE",
+            super::sorted_set::cmd_zrevrangebyscore,
+            -4,
+        );
         self.register("ZRANK", super::sorted_set::cmd_zrank, 3);
         self.register("ZREVRANK", super::sorted_set::cmd_zrevrank, 3);
         self.register("ZPOPMIN", super::sorted_set::cmd_zpopmin, -2);
@@ -339,14 +344,22 @@ impl CommandRegistry {
         self.register("GEORADIUS", super::stubs::cmd_georadius, -6);
         self.register("GEORADIUSBYMEMBER", super::stubs::cmd_georadiusbymember, -5);
         self.register("GEORADIUS_RO", super::stubs::cmd_georadius, -6);
-        self.register("GEORADIUSBYMEMBER_RO", super::stubs::cmd_georadiusbymember, -5);
+        self.register(
+            "GEORADIUSBYMEMBER_RO",
+            super::stubs::cmd_georadiusbymember,
+            -5,
+        );
 
         // === Missing sorted set commands (Group 3) ===
         self.register("ZRANGEBYLEX", super::sorted_set::cmd_zrangebylex, -4);
         self.register("ZREVRANGEBYLEX", super::sorted_set::cmd_zrevrangebylex, -4);
         self.register("ZREMRANGEBYLEX", super::sorted_set::cmd_zremrangebylex, 4);
         self.register("ZREMRANGEBYRANK", super::sorted_set::cmd_zremrangebyrank, 4);
-        self.register("ZREMRANGEBYSCORE", super::sorted_set::cmd_zremrangebyscore, 4);
+        self.register(
+            "ZREMRANGEBYSCORE",
+            super::sorted_set::cmd_zremrangebyscore,
+            4,
+        );
 
         // === Other missing commands (Group 4) ===
         self.register("XSETID", super::stream::cmd_xsetid, -3);
@@ -418,7 +431,11 @@ impl CommandRegistry {
 
         // === Count-Min Sketch commands ===
         self.register("CMS.INITBYDIM", super::probabilistic::cmd_cms_initbydim, 4);
-        self.register("CMS.INITBYPROB", super::probabilistic::cmd_cms_initbyprob, 4);
+        self.register(
+            "CMS.INITBYPROB",
+            super::probabilistic::cmd_cms_initbyprob,
+            4,
+        );
         self.register("CMS.INCRBY", super::probabilistic::cmd_cms_incrby, -4);
         self.register("CMS.QUERY", super::probabilistic::cmd_cms_query, -3);
         self.register("CMS.MERGE", super::probabilistic::cmd_cms_merge, -4);
@@ -436,6 +453,10 @@ impl CommandRegistry {
         self.register("RATELIMIT.CHECK", super::ratelimit::cmd_ratelimit_check, 4);
         self.register("RATELIMIT.GET", super::ratelimit::cmd_ratelimit_get, 2);
         self.register("RATELIMIT.RESET", super::ratelimit::cmd_ratelimit_reset, 2);
-        self.register("RATELIMIT.ACQUIRE", super::ratelimit::cmd_ratelimit_acquire, 4);
+        self.register(
+            "RATELIMIT.ACQUIRE",
+            super::ratelimit::cmd_ratelimit_acquire,
+            4,
+        );
     }
 }

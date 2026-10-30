@@ -105,6 +105,12 @@ curl http://localhost:8080/metrics
 
 See [FEATURES.md](FEATURES.md) for a full feature comparison matrix.
 
+## CI & Releases
+
+- **Pull requests** run checks only, on a GitHub-hosted `ubuntu-latest` runner: `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo test`. No release builds or artifacts.
+- **Merges to `main`** don't re-run CI; the PR checks already covered the change.
+- **Releases** are cut with `gh release create v<version> --generate-notes`. This repo has no release build workflow, so a release triggers no CI.
+
 ## License
 
 MIT License - Copyright (c) 2026 Zeros And Ones LLC

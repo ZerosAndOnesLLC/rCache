@@ -1,8 +1,8 @@
-use bytes::Bytes;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
 use crate::storage::types::SortedSetData;
-use super::registry::CommandContext;
+use bytes::Bytes;
 
 const EARTH_RADIUS_M: f64 = 6372797.560856;
 const D_R: f64 = std::f64::consts::PI / 180.0;
@@ -99,7 +99,10 @@ fn convert_to_meters(distance: f64, unit: &str) -> f64 {
     }
 }
 
-fn get_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a SortedSetData>, RespValue> {
+fn get_zset<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<Option<&'a SortedSetData>, RespValue> {
     match ctx.db().get(key) {
         Some(RedisObject::SortedSet(z)) => Ok(Some(z)),
         Some(_) => Err(RespValue::wrong_type()),
@@ -107,8 +110,14 @@ fn get_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a S
     }
 }
 
-fn ensure_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut SortedSetData, RespValue> {
-    match ctx.db().get_or_insert_with(key, || RedisObject::SortedSet(SortedSetData::new())) {
+fn ensure_zset<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<&'a mut SortedSetData, RespValue> {
+    match ctx
+        .db()
+        .get_or_insert_with(key, || RedisObject::SortedSet(SortedSetData::new()))
+    {
         RedisObject::SortedSet(z) => Ok(z),
         _ => Err(RespValue::wrong_type()),
     }
@@ -125,14 +134,23 @@ pub fn cmd_geoadd(ctx: &mut CommandContext) -> RespValue {
     while i < ctx.args.len() {
         let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
         match opt.as_str() {
-            "NX" => { nx = true; i += 1; }
-            "XX" => { xx = true; i += 1; }
-            "CH" => { ch = true; i += 1; }
+            "NX" => {
+                nx = true;
+                i += 1;
+            }
+            "XX" => {
+                xx = true;
+                i += 1;
+            }
+            "CH" => {
+                ch = true;
+                i += 1;
+            }
             _ => break,
         }
     }
 
-    if (ctx.args.len() - i) % 3 != 0 {
+    if !(ctx.args.len() - i).is_multiple_of(3) {
         return RespValue::wrong_arity("geoadd");
     }
 
@@ -184,7 +202,11 @@ pub fn cmd_geoadd(ctx: &mut CommandContext) -> RespValue {
         }
     }
 
-    if ch { RespValue::integer(changed) } else { RespValue::integer(added) }
+    if ch {
+        RespValue::integer(changed)
+    } else {
+        RespValue::integer(added)
+    }
 }
 
 pub fn cmd_geopos(ctx: &mut CommandContext) -> RespValue {
@@ -193,8 +215,9 @@ pub fn cmd_geopos(ctx: &mut CommandContext) -> RespValue {
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let results: Vec<RespValue> = members.iter().map(|m| {
-                match zset.score(m) {
+            let results: Vec<RespValue> = members
+                .iter()
+                .map(|m| match zset.score(m) {
                     Some(score) => {
                         let (lon, lat) = geohash_decode(score);
                         RespValue::array(vec![
@@ -203,13 +226,11 @@ pub fn cmd_geopos(ctx: &mut CommandContext) -> RespValue {
                         ])
                     }
                     None => RespValue::Null,
-                }
-            }).collect();
+                })
+                .collect();
             RespValue::array(results)
         }
-        Ok(None) => {
-            RespValue::array(members.iter().map(|_| RespValue::Null).collect())
-        }
+        Ok(None) => RespValue::array(members.iter().map(|_| RespValue::Null).collect()),
         Err(e) => e,
     }
 }
@@ -268,12 +289,16 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
         match opt.as_str() {
             "FROMMEMBER" => {
                 i += 1;
-                if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 from_member = Some(ctx.args[i].clone());
             }
             "FROMLONLAT" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 from_lon = Some(match super::parse::float(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not a valid float"),
@@ -286,7 +311,9 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
             }
             "BYRADIUS" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 let radius = match super::parse::float(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not a valid float"),
@@ -297,7 +324,9 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
             }
             "BYBOX" => {
                 i += 1;
-                if i + 2 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 2 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 let width = match super::parse::float(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not a valid float"),
@@ -315,13 +344,17 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
             "DESC" => desc = true,
             "COUNT" => {
                 i += 1;
-                if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 count = Some(match super::parse::usize_(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
                 // Check for ANY
-                if i + 1 < ctx.args.len() && String::from_utf8_lossy(&ctx.args[i + 1]).to_uppercase() == "ANY" {
+                if i + 1 < ctx.args.len()
+                    && String::from_utf8_lossy(&ctx.args[i + 1]).to_uppercase() == "ANY"
+                {
                     any = true;
                     i += 1;
                 }
@@ -405,27 +438,30 @@ pub fn cmd_geosearch(ctx: &mut CommandContext) -> RespValue {
 
     let has_extras = withcoord || withdist || withhash;
 
-    let items: Vec<RespValue> = results.iter().map(|(member, score, lon, lat, dist)| {
-        if has_extras {
-            let mut item = vec![RespValue::bulk_string(member.clone())];
-            if withdist {
-                let d = convert_distance(*dist, &unit_str);
-                item.push(RespValue::bulk_string(Bytes::from(format!("{:.4}", d))));
+    let items: Vec<RespValue> = results
+        .iter()
+        .map(|(member, score, lon, lat, dist)| {
+            if has_extras {
+                let mut item = vec![RespValue::bulk_string(member.clone())];
+                if withdist {
+                    let d = convert_distance(*dist, &unit_str);
+                    item.push(RespValue::bulk_string(Bytes::from(format!("{:.4}", d))));
+                }
+                if withhash {
+                    item.push(RespValue::integer(*score as i64));
+                }
+                if withcoord {
+                    item.push(RespValue::array(vec![
+                        RespValue::bulk_string(Bytes::from(format!("{:.6}", lon))),
+                        RespValue::bulk_string(Bytes::from(format!("{:.6}", lat))),
+                    ]));
+                }
+                RespValue::array(item)
+            } else {
+                RespValue::bulk_string(member.clone())
             }
-            if withhash {
-                item.push(RespValue::integer(*score as i64));
-            }
-            if withcoord {
-                item.push(RespValue::array(vec![
-                    RespValue::bulk_string(Bytes::from(format!("{:.6}", lon))),
-                    RespValue::bulk_string(Bytes::from(format!("{:.6}", lat))),
-                ]));
-            }
-            RespValue::array(item)
-        } else {
-            RespValue::bulk_string(member.clone())
-        }
-    }).collect();
+        })
+        .collect();
 
     let _ = any; // suppress unused warning - ANY is an optimization hint
     RespValue::array(items)
@@ -453,12 +489,16 @@ pub fn cmd_geosearchstore(ctx: &mut CommandContext) -> RespValue {
         match opt.as_str() {
             "FROMMEMBER" => {
                 i += 1;
-                if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 from_member = Some(ctx.args[i].clone());
             }
             "FROMLONLAT" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 from_lon = Some(match super::parse::float(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not a valid float"),
@@ -471,7 +511,9 @@ pub fn cmd_geosearchstore(ctx: &mut CommandContext) -> RespValue {
             }
             "BYRADIUS" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 let radius = match super::parse::float(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not a valid float"),
@@ -482,7 +524,9 @@ pub fn cmd_geosearchstore(ctx: &mut CommandContext) -> RespValue {
             }
             "BYBOX" => {
                 i += 1;
-                if i + 2 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 2 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 let width = match super::parse::float(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not a valid float"),
@@ -500,12 +544,16 @@ pub fn cmd_geosearchstore(ctx: &mut CommandContext) -> RespValue {
             "DESC" => desc = true,
             "COUNT" => {
                 i += 1;
-                if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 count = Some(match super::parse::usize_(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
-                if i + 1 < ctx.args.len() && String::from_utf8_lossy(&ctx.args[i + 1]).to_uppercase() == "ANY" {
+                if i + 1 < ctx.args.len()
+                    && String::from_utf8_lossy(&ctx.args[i + 1]).to_uppercase() == "ANY"
+                {
                     i += 1;
                 }
             }
@@ -608,12 +656,13 @@ pub fn cmd_geohash(ctx: &mut CommandContext) -> RespValue {
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let results: Vec<RespValue> = members.iter().map(|m| {
-                match zset.score(m) {
+            let results: Vec<RespValue> = members
+                .iter()
+                .map(|m| match zset.score(m) {
                     Some(score) => RespValue::bulk_string(Bytes::from(geohash_string(score))),
                     None => RespValue::Null,
-                }
-            }).collect();
+                })
+                .collect();
             RespValue::array(results)
         }
         Ok(None) => RespValue::array(members.iter().map(|_| RespValue::Null).collect()),

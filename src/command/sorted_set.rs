@@ -1,14 +1,17 @@
-use bytes::Bytes;
-use crate::protocol::RespValue;
-use crate::storage::types::SortedSetData;
-use crate::storage::RedisObject;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
+use crate::storage::RedisObject;
+use crate::storage::types::SortedSetData;
+use bytes::Bytes;
 
 /// Upper bound on the magnitude of a negative ZRANDMEMBER `count` (the
 /// with-duplicates form), preventing an unbounded allocation.
 const MAX_RAND_COUNT: u64 = 1_000_000;
 
-fn get_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a SortedSetData>, RespValue> {
+fn get_zset<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<Option<&'a SortedSetData>, RespValue> {
     match ctx.db().get(key) {
         Some(RedisObject::SortedSet(z)) => Ok(Some(z)),
         Some(_) => Err(RespValue::wrong_type()),
@@ -16,7 +19,10 @@ fn get_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a S
     }
 }
 
-fn get_zset_mut<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a mut SortedSetData>, RespValue> {
+fn get_zset_mut<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<Option<&'a mut SortedSetData>, RespValue> {
     match ctx.db().get_mut(key) {
         Some(RedisObject::SortedSet(z)) => Ok(Some(z)),
         Some(_) => Err(RespValue::wrong_type()),
@@ -24,8 +30,14 @@ fn get_zset_mut<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&
     }
 }
 
-fn ensure_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut SortedSetData, RespValue> {
-    match ctx.db().get_or_insert_with(key, || RedisObject::SortedSet(SortedSetData::new())) {
+fn ensure_zset<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<&'a mut SortedSetData, RespValue> {
+    match ctx
+        .db()
+        .get_or_insert_with(key, || RedisObject::SortedSet(SortedSetData::new()))
+    {
         RedisObject::SortedSet(z) => Ok(z),
         _ => Err(RespValue::wrong_type()),
     }
@@ -33,10 +45,10 @@ fn ensure_zset<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut S
 
 fn cleanup_empty_zset(ctx: &mut CommandContext, key: &Bytes) {
     let db = ctx.db();
-    if let Some(RedisObject::SortedSet(z)) = db.get(key) {
-        if z.is_empty() {
-            db.remove(key);
-        }
+    if let Some(RedisObject::SortedSet(z)) = db.get(key)
+        && z.is_empty()
+    {
+        db.remove(key);
     }
 }
 
@@ -73,11 +85,26 @@ pub fn cmd_zadd(ctx: &mut CommandContext) -> RespValue {
     while i < ctx.args.len() {
         let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
         match opt.as_str() {
-            "NX" => { nx = true; i += 1; }
-            "XX" => { xx = true; i += 1; }
-            "GT" => { gt = true; i += 1; }
-            "LT" => { lt = true; i += 1; }
-            "CH" => { ch = true; i += 1; }
+            "NX" => {
+                nx = true;
+                i += 1;
+            }
+            "XX" => {
+                xx = true;
+                i += 1;
+            }
+            "GT" => {
+                gt = true;
+                i += 1;
+            }
+            "LT" => {
+                lt = true;
+                i += 1;
+            }
+            "CH" => {
+                ch = true;
+                i += 1;
+            }
             _ => break,
         }
     }
@@ -86,7 +113,7 @@ pub fn cmd_zadd(ctx: &mut CommandContext) -> RespValue {
         return RespValue::error("ERR XX and NX options at the same time are not compatible");
     }
 
-    if (ctx.args.len() - i) % 2 != 0 {
+    if !(ctx.args.len() - i).is_multiple_of(2) {
         return RespValue::wrong_arity("zadd");
     }
 
@@ -152,7 +179,11 @@ pub fn cmd_zadd(ctx: &mut CommandContext) -> RespValue {
         }
     }
 
-    if ch { RespValue::integer(changed) } else { RespValue::integer(added) }
+    if ch {
+        RespValue::integer(changed)
+    } else {
+        RespValue::integer(added)
+    }
 }
 
 pub fn cmd_zrem(ctx: &mut CommandContext) -> RespValue {
@@ -192,7 +223,8 @@ pub fn cmd_zmscore(ctx: &mut CommandContext) -> RespValue {
     let members: Vec<Bytes> = ctx.args[2..].to_vec();
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let results: Vec<RespValue> = members.iter()
+            let results: Vec<RespValue> = members
+                .iter()
                 .map(|m| match zset.score(m) {
                     Some(s) => RespValue::bulk_string(Bytes::from(format!("{}", s))),
                     None => RespValue::Null,
@@ -251,7 +283,9 @@ pub fn cmd_zcount(ctx: &mut CommandContext) -> RespValue {
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
-            let count = zset.range_by_score_bounded(min, min_inclusive, max, max_inclusive).len();
+            let count = zset
+                .range_by_score_bounded(min, min_inclusive, max, max_inclusive)
+                .len();
             RespValue::integer(count as i64)
         }
         Ok(None) => RespValue::integer(0),
@@ -281,7 +315,9 @@ pub fn cmd_zrange(ctx: &mut CommandContext) -> RespValue {
             "WITHSCORES" => withscores = true,
             "LIMIT" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 limit_offset = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
                 i += 1;
                 limit_count = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
@@ -352,7 +388,9 @@ pub fn cmd_zrangebyscore(ctx: &mut CommandContext) -> RespValue {
             "WITHSCORES" => withscores = true,
             "LIMIT" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 limit_offset = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
                 i += 1;
                 limit_count = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
@@ -386,14 +424,23 @@ pub fn cmd_zrevrange(ctx: &mut CommandContext) -> RespValue {
         None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
-    let withscores = ctx.args.len() > 4 && String::from_utf8_lossy(&ctx.args[4]).to_uppercase() == "WITHSCORES";
+    let withscores =
+        ctx.args.len() > 4 && String::from_utf8_lossy(&ctx.args[4]).to_uppercase() == "WITHSCORES";
 
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
             // ZREVRANGE uses reverse indices: 0 = highest score, 1 = second highest, etc.
             let len = zset.len() as i64;
-            let fwd_start = if start < 0 { (len + start).max(0) } else { start.min(len) };
-            let fwd_stop = if stop < 0 { (len + stop).max(0) } else { stop.min(len - 1) };
+            let fwd_start = if start < 0 {
+                (len + start).max(0)
+            } else {
+                start.min(len)
+            };
+            let fwd_stop = if stop < 0 {
+                (len + stop).max(0)
+            } else {
+                stop.min(len - 1)
+            };
             // Convert reverse indices to forward: rev_idx 0 -> fwd_idx (len-1)
             let real_start = len - 1 - fwd_stop;
             let real_stop = len - 1 - fwd_start;
@@ -431,7 +478,9 @@ pub fn cmd_zrevrangebyscore(ctx: &mut CommandContext) -> RespValue {
             "WITHSCORES" => withscores = true,
             "LIMIT" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 limit_offset = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
                 i += 1;
                 limit_count = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
@@ -554,18 +603,22 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
         None
     };
 
-    let withscores = ctx.args.len() > 3 &&
-        String::from_utf8_lossy(&ctx.args[3]).to_uppercase() == "WITHSCORES";
+    let withscores =
+        ctx.args.len() > 3 && String::from_utf8_lossy(&ctx.args[3]).to_uppercase() == "WITHSCORES";
 
     let db = ctx.db();
     match db.get(&key) {
         Some(RedisObject::SortedSet(zset)) => {
             if zset.is_empty() {
-                return if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null };
+                return if count.is_some() {
+                    RespValue::array(vec![])
+                } else {
+                    RespValue::Null
+                };
             }
 
             use rand::seq::IteratorRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             match count {
                 None => {
@@ -575,8 +628,9 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
                 Some(n) if n >= 0 => {
                     let n = n as usize;
                     let all: Vec<(Bytes, f64)> = zset.range_by_index(0, -1);
-                    let selected: Vec<(Bytes, f64)> = all.iter()
-                        .choose_multiple(&mut rng, n.min(all.len()))
+                    let selected: Vec<(Bytes, f64)> = all
+                        .iter()
+                        .sample(&mut rng, n.min(all.len()))
                         .into_iter()
                         .cloned()
                         .collect();
@@ -588,7 +642,12 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
                         }
                         RespValue::array(items)
                     } else {
-                        RespValue::array(selected.into_iter().map(|(m, _)| RespValue::bulk_string(m)).collect())
+                        RespValue::array(
+                            selected
+                                .into_iter()
+                                .map(|(m, _)| RespValue::bulk_string(m))
+                                .collect(),
+                        )
                     }
                 }
                 Some(n) => {
@@ -598,7 +657,7 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
                         Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
                         _ => return RespValue::error("ERR count value is out of range"),
                     };
-                    use rand::seq::SliceRandom;
+                    use rand::seq::IndexedRandom;
                     let all: Vec<(Bytes, f64)> = zset.range_by_index(0, -1);
                     let mut items = Vec::new();
                     for _ in 0..n {
@@ -615,7 +674,13 @@ pub fn cmd_zrandmember(ctx: &mut CommandContext) -> RespValue {
             }
         }
         Some(_) => RespValue::wrong_type(),
-        None => if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null },
+        None => {
+            if count.is_some() {
+                RespValue::array(vec![])
+            } else {
+                RespValue::Null
+            }
+        }
     }
 }
 
@@ -631,7 +696,11 @@ pub fn cmd_zdiffstore(ctx: &mut CommandContext) -> RespValue {
     zstore_op(ctx, SetOp::Diff)
 }
 
-enum SetOp { Union, Inter, Diff }
+enum SetOp {
+    Union,
+    Inter,
+    Diff,
+}
 
 fn zstore_op(ctx: &mut CommandContext, op: SetOp) -> RespValue {
     let dest = ctx.args[1].clone();
@@ -655,10 +724,10 @@ fn zstore_op(ctx: &mut CommandContext, op: SetOp) -> RespValue {
         let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
         match opt.as_str() {
             "WEIGHTS" => {
-                for j in 0..numkeys {
+                for weight in weights.iter_mut().take(numkeys) {
                     i += 1;
                     if i < ctx.args.len() {
-                        weights[j] = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
+                        *weight = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
                     }
                 }
             }
@@ -713,7 +782,10 @@ fn zstore_op(ctx: &mut CommandContext, op: SetOp) -> RespValue {
                     for (idx, set) in sets.iter().enumerate().skip(1) {
                         match set.score(member) {
                             Some(s) => combined = aggregate.apply(combined, s * weights[idx]),
-                            None => { in_all = false; break; }
+                            None => {
+                                in_all = false;
+                                break;
+                            }
                         }
                     }
                     if in_all {
@@ -739,7 +811,11 @@ fn zstore_op(ctx: &mut CommandContext, op: SetOp) -> RespValue {
     RespValue::integer(len)
 }
 
-enum Aggregate { Sum, Min, Max }
+enum Aggregate {
+    Sum,
+    Min,
+    Max,
+}
 
 impl Aggregate {
     fn apply(&self, a: f64, b: f64) -> f64 {
@@ -759,9 +835,10 @@ pub fn cmd_zlexcount(ctx: &mut CommandContext) -> RespValue {
     match get_zset(ctx, &key) {
         Ok(Some(zset)) => {
             let all = zset.range_by_index(0, -1);
-            let count = all.iter().filter(|(m, _)| {
-                lex_in_range(m, &min_str, &max_str)
-            }).count();
+            let count = all
+                .iter()
+                .filter(|(m, _)| lex_in_range(m, &min_str, &max_str))
+                .count();
             RespValue::integer(count as i64)
         }
         Ok(None) => RespValue::integer(0),
@@ -804,7 +881,12 @@ fn format_zset_response(items: Vec<(Bytes, f64)>, withscores: bool) -> RespValue
         }
         RespValue::array(result)
     } else {
-        RespValue::array(items.into_iter().map(|(m, _)| RespValue::bulk_string(m)).collect())
+        RespValue::array(
+            items
+                .into_iter()
+                .map(|(m, _)| RespValue::bulk_string(m))
+                .collect(),
+        )
     }
 }
 
@@ -829,7 +911,9 @@ pub fn cmd_zrangestore(ctx: &mut CommandContext) -> RespValue {
             "REV" => rev = true,
             "LIMIT" => {
                 i += 1;
-                if i + 1 >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i + 1 >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 limit_offset = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
                 i += 1;
                 limit_count = Some(String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(0));
@@ -853,7 +937,9 @@ pub fn cmd_zrangestore(ctx: &mut CommandContext) -> RespValue {
                 zset.range_by_score_bounded(min, min_incl, max, max_incl)
             } else if bylex {
                 let all = zset.range_by_index(0, -1);
-                all.into_iter().filter(|(m, _)| lex_in_range(m, &min_arg, &max_arg)).collect()
+                all.into_iter()
+                    .filter(|(m, _)| lex_in_range(m, &min_arg, &max_arg))
+                    .collect()
             } else {
                 let start: i64 = min_arg.parse().unwrap_or(0);
                 let stop: i64 = max_arg.parse().unwrap_or(-1);
@@ -920,10 +1006,10 @@ fn zset_op(ctx: &mut CommandContext, op: SetOp, _store: bool) -> RespValue {
         let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
         match opt.as_str() {
             "WEIGHTS" => {
-                for j in 0..numkeys {
+                for weight in weights.iter_mut().take(numkeys) {
                     i += 1;
                     if i < ctx.args.len() {
-                        weights[j] = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
+                        *weight = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
                     }
                 }
             }
@@ -977,7 +1063,10 @@ fn zset_op(ctx: &mut CommandContext, op: SetOp, _store: bool) -> RespValue {
                     for (idx, set) in sets.iter().enumerate().skip(1) {
                         match set.score(member) {
                             Some(s) => combined = aggregate.apply(combined, s * weights[idx]),
-                            None => { in_all = false; break; }
+                            None => {
+                                in_all = false;
+                                break;
+                            }
                         }
                     }
                     if in_all {
@@ -1041,7 +1130,7 @@ pub fn cmd_zintercard(ctx: &mut CommandContext) -> RespValue {
 
     let first = &sets[0];
     let mut count = 0usize;
-    for (member, _) in &first.members {
+    for member in first.members.keys() {
         let in_all = sets[1..].iter().all(|s| s.score(member).is_some());
         if in_all {
             count += 1;
@@ -1335,13 +1424,10 @@ pub fn cmd_zremrangebylex(ctx: &mut CommandContext) -> RespValue {
                 .map(|(m, _)| m)
                 .collect();
             let count = to_remove.len() as i64;
-            match get_zset_mut(ctx, &key) {
-                Ok(Some(zset)) => {
-                    for m in &to_remove {
-                        zset.remove(m);
-                    }
+            if let Ok(Some(zset)) = get_zset_mut(ctx, &key) {
+                for m in &to_remove {
+                    zset.remove(m);
                 }
-                _ => {}
             }
             cleanup_empty_zset(ctx, &key);
             RespValue::integer(count)
@@ -1367,13 +1453,10 @@ pub fn cmd_zremrangebyrank(ctx: &mut CommandContext) -> RespValue {
             let items = zset.range_by_index(start, stop);
             let to_remove: Vec<Bytes> = items.into_iter().map(|(m, _)| m).collect();
             let count = to_remove.len() as i64;
-            match get_zset_mut(ctx, &key) {
-                Ok(Some(zset)) => {
-                    for m in &to_remove {
-                        zset.remove(m);
-                    }
+            if let Ok(Some(zset)) = get_zset_mut(ctx, &key) {
+                for m in &to_remove {
+                    zset.remove(m);
                 }
-                _ => {}
             }
             cleanup_empty_zset(ctx, &key);
             RespValue::integer(count)
@@ -1402,13 +1485,10 @@ pub fn cmd_zremrangebyscore(ctx: &mut CommandContext) -> RespValue {
             let items = zset.range_by_score_bounded(min, min_incl, max, max_incl);
             let to_remove: Vec<Bytes> = items.into_iter().map(|(m, _)| m).collect();
             let count = to_remove.len() as i64;
-            match get_zset_mut(ctx, &key) {
-                Ok(Some(zset)) => {
-                    for m in &to_remove {
-                        zset.remove(m);
-                    }
+            if let Ok(Some(zset)) = get_zset_mut(ctx, &key) {
+                for m in &to_remove {
+                    zset.remove(m);
                 }
-                _ => {}
             }
             cleanup_empty_zset(ctx, &key);
             RespValue::integer(count)

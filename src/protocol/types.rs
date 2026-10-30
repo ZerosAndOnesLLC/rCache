@@ -1,4 +1,4 @@
-use bytes::{Bytes, BytesMut, BufMut};
+use bytes::{BufMut, Bytes, BytesMut};
 
 /// RESP protocol value types.
 #[derive(Debug, Clone, PartialEq)]
@@ -12,15 +12,15 @@ pub enum RespValue {
     Null,
     NullArray,
     // RESP3 types
-    Double(f64),                          // ,3.14\r\n
-    Boolean(bool),                        // #t\r\n or #f\r\n
-    BlobError(Bytes),                     // !<len>\r\n<data>\r\n
-    VerbatimString(Bytes),                // =<len>\r\n<encoding>:<data>\r\n
-    BigNumber(String),                    // (12345\r\n
-    Map(Vec<(RespValue, RespValue)>),     // %N\r\n
-    RespSet(Vec<RespValue>),              // ~N\r\n
-    Push(Vec<RespValue>),                 // >N\r\n
-    Resp3Null,                            // _\r\n
+    Double(f64),                      // ,3.14\r\n
+    Boolean(bool),                    // #t\r\n or #f\r\n
+    BlobError(Bytes),                 // !<len>\r\n<data>\r\n
+    VerbatimString(Bytes),            // =<len>\r\n<encoding>:<data>\r\n
+    BigNumber(String),                // (12345\r\n
+    Map(Vec<(RespValue, RespValue)>), // %N\r\n
+    RespSet(Vec<RespValue>),          // ~N\r\n
+    Push(Vec<RespValue>),             // >N\r\n
+    Resp3Null,                        // _\r\n
 }
 
 impl RespValue {
@@ -33,11 +33,16 @@ impl RespValue {
     }
 
     pub fn wrong_type() -> Self {
-        RespValue::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+        RespValue::Error(
+            "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+        )
     }
 
     pub fn wrong_arity(cmd: &str) -> Self {
-        RespValue::Error(format!("ERR wrong number of arguments for '{}' command", cmd))
+        RespValue::Error(format!(
+            "ERR wrong number of arguments for '{}' command",
+            cmd
+        ))
     }
 
     pub fn integer(n: i64) -> Self {
@@ -73,8 +78,12 @@ impl RespValue {
             RespValue::BlobError(b) => b.len() + 16,
             RespValue::VerbatimString(b) => b.len() + 16,
             RespValue::BigNumber(s) => s.len() + 3,
-            RespValue::Map(entries) => 16 + entries.iter()
-                .map(|(k, v)| k.size_hint() + v.size_hint()).sum::<usize>(),
+            RespValue::Map(entries) => {
+                16 + entries
+                    .iter()
+                    .map(|(k, v)| k.size_hint() + v.size_hint())
+                    .sum::<usize>()
+            }
             RespValue::RespSet(items) => 16 + items.iter().map(|i| i.size_hint()).sum::<usize>(),
             RespValue::Push(items) => 16 + items.iter().map(|i| i.size_hint()).sum::<usize>(),
             RespValue::Resp3Null => 3,

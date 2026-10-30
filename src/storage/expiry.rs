@@ -1,5 +1,5 @@
-use std::time::{Duration, Instant};
 use super::store::Store;
+use std::time::{Duration, Instant};
 
 const MAX_CYCLE_DURATION: Duration = Duration::from_millis(25);
 /// Hard cap on how long a single database's expire pass may run. Without this,

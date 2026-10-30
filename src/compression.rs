@@ -20,7 +20,8 @@ pub fn compress(data: &[u8]) -> Bytes {
 }
 
 fn read_original_len(data: &[u8]) -> Result<usize, &'static str> {
-    let bytes: [u8; 4] = data.get(4..8)
+    let bytes: [u8; 4] = data
+        .get(4..8)
         .ok_or("data too short for LZ4 header")?
         .try_into()
         .map_err(|_| "data too short for LZ4 header")?;
@@ -48,8 +49,7 @@ pub fn decompress(data: &[u8]) -> Result<Bytes, String> {
         return Err("decompressed size exceeds maximum".to_string());
     }
     if compressed_data.len() >= 4 {
-        let prepended =
-            u32::from_le_bytes(compressed_data[0..4].try_into().unwrap()) as usize;
+        let prepended = u32::from_le_bytes(compressed_data[0..4].try_into().unwrap()) as usize;
         if prepended > MAX_DECOMPRESSED {
             return Err("decompressed size exceeds maximum".to_string());
         }

@@ -1,7 +1,7 @@
-use bytes::Bytes;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
 
 // ============================================================
 // MODULE commands — stubs
@@ -15,12 +15,8 @@ pub fn cmd_module(ctx: &mut CommandContext) -> RespValue {
     let subcmd = String::from_utf8_lossy(&ctx.args[1]).to_uppercase();
     match subcmd.as_str() {
         "LIST" => RespValue::array(vec![]),
-        "LOAD" | "LOADEX" => {
-            RespValue::error("ERR module system not supported")
-        }
-        "UNLOAD" => {
-            RespValue::error("ERR module system not supported")
-        }
+        "LOAD" | "LOADEX" => RespValue::error("ERR module system not supported"),
+        "UNLOAD" => RespValue::error("ERR module system not supported"),
         _ => RespValue::error(format!(
             "ERR unknown subcommand or wrong number of arguments for 'module|{}'",
             subcmd.to_lowercase()
@@ -295,8 +291,7 @@ fn lcs_matches(a: &[u8], b: &[u8], dp: &[Vec<u32>], min_match_len: usize) -> Vec
             true
         } else {
             // Check if positions are consecutive in both a and b
-            positions[k].0 != positions[k - 1].0 + 1
-                || positions[k].1 != positions[k - 1].1 + 1
+            positions[k].0 != positions[k - 1].0 + 1 || positions[k].1 != positions[k - 1].1 + 1
         };
 
         if is_end {

@@ -32,8 +32,9 @@ fn auth_wrong_password_rejected() {
     let s = Server::spawn_with_args(&["--requirepass", "topsecret"]);
     let mut c = s.client().get_connection().unwrap();
 
-    let res: Result<String, _> = redis::cmd("AUTH")
-        .arg("wrong")
-        .query(&mut c);
-    assert!(res.is_err(), "AUTH with wrong password must return WRONGPASS");
+    let res: Result<String, _> = redis::cmd("AUTH").arg("wrong").query(&mut c);
+    assert!(
+        res.is_err(),
+        "AUTH with wrong password must return WRONGPASS"
+    );
 }

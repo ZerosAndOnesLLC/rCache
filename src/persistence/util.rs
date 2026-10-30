@@ -24,10 +24,10 @@ pub fn with_secure_mode(opts: &mut OpenOptions) -> &mut OpenOptions {
 /// symlink pre-created at the path cannot be followed (TOCTOU), and restricts
 /// permissions to owner-only on Unix. Returns the open handle and its path.
 pub fn create_temp_file(final_path: &Path) -> io::Result<(File, PathBuf)> {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
+    use rand::RngExt;
+    let mut rng = rand::rng();
     for _ in 0..8 {
-        let suffix: u64 = rng.r#gen();
+        let suffix: u64 = rng.random();
         let temp_path = temp_path_with_suffix(final_path, suffix);
         let mut opts = OpenOptions::new();
         opts.write(true).create_new(true);

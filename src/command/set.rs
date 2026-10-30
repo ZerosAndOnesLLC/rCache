@@ -1,15 +1,18 @@
-use bytes::Bytes;
-use std::collections::HashSet;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
+use std::collections::HashSet;
 
 /// Upper bound on the magnitude of a negative `count` for SRANDMEMBER /
 /// ZRANDMEMBER / HRANDFIELD (the with-duplicates form), preventing an
 /// attacker from forcing a multi-billion-element allocation.
 const MAX_RAND_COUNT: u64 = 1_000_000;
 
-fn get_set<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a HashSet<Bytes>>, RespValue> {
+fn get_set<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<Option<&'a HashSet<Bytes>>, RespValue> {
     match ctx.db().get(key) {
         Some(RedisObject::Set(s)) => Ok(Some(s)),
         Some(_) => Err(RespValue::wrong_type()),
@@ -17,7 +20,10 @@ fn get_set<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a Ha
     }
 }
 
-fn get_set_mut<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a mut HashSet<Bytes>>, RespValue> {
+fn get_set_mut<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<Option<&'a mut HashSet<Bytes>>, RespValue> {
     match ctx.db().get_mut(key) {
         Some(RedisObject::Set(s)) => Ok(Some(s)),
         Some(_) => Err(RespValue::wrong_type()),
@@ -25,8 +31,14 @@ fn get_set_mut<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'
     }
 }
 
-fn ensure_set<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut HashSet<Bytes>, RespValue> {
-    match ctx.db().get_or_insert_with(key, || RedisObject::Set(HashSet::new())) {
+fn ensure_set<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<&'a mut HashSet<Bytes>, RespValue> {
+    match ctx
+        .db()
+        .get_or_insert_with(key, || RedisObject::Set(HashSet::new()))
+    {
         RedisObject::Set(s) => Ok(s),
         _ => Err(RespValue::wrong_type()),
     }
@@ -34,10 +46,10 @@ fn ensure_set<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut Ha
 
 fn cleanup_empty_set(ctx: &mut CommandContext, key: &Bytes) {
     let db = ctx.db();
-    if let Some(RedisObject::Set(s)) = db.get(key) {
-        if s.is_empty() {
-            db.remove(key);
-        }
+    if let Some(RedisObject::Set(s)) = db.get(key)
+        && s.is_empty()
+    {
+        db.remove(key);
     }
 }
 
@@ -91,14 +103,13 @@ pub fn cmd_smismember(ctx: &mut CommandContext) -> RespValue {
     let members: Vec<Bytes> = ctx.args[2..].to_vec();
     match get_set(ctx, &key) {
         Ok(Some(set)) => {
-            let results: Vec<RespValue> = members.iter()
+            let results: Vec<RespValue> = members
+                .iter()
                 .map(|m| RespValue::integer(if set.contains(m) { 1 } else { 0 }))
                 .collect();
             RespValue::array(results)
         }
-        Ok(None) => {
-            RespValue::array(members.iter().map(|_| RespValue::integer(0)).collect())
-        }
+        Ok(None) => RespValue::array(members.iter().map(|_| RespValue::integer(0)).collect()),
         Err(e) => e,
     }
 }
@@ -107,7 +118,10 @@ pub fn cmd_smembers(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     match get_set(ctx, &key) {
         Ok(Some(set)) => {
-            let items: Vec<RespValue> = set.iter().map(|m| RespValue::bulk_string(m.clone())).collect();
+            let items: Vec<RespValue> = set
+                .iter()
+                .map(|m| RespValue::bulk_string(m.clone()))
+                .collect();
             RespValue::array(items)
         }
         Ok(None) => RespValue::array(vec![]),
@@ -138,11 +152,15 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
     match get_set(ctx, &key) {
         Ok(Some(set)) => {
             if set.is_empty() {
-                return if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null };
+                return if count.is_some() {
+                    RespValue::array(vec![])
+                } else {
+                    RespValue::Null
+                };
             }
 
             use rand::seq::IteratorRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             match count {
                 None => {
@@ -151,8 +169,9 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
                 }
                 Some(n) if n >= 0 => {
                     let n = n as usize;
-                    let members: Vec<RespValue> = set.iter()
-                        .choose_multiple(&mut rng, n.min(set.len()))
+                    let members: Vec<RespValue> = set
+                        .iter()
+                        .sample(&mut rng, n.min(set.len()))
                         .into_iter()
                         .map(|m| RespValue::bulk_string(m.clone()))
                         .collect();
@@ -166,7 +185,7 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
                         Some(v) if v as u64 <= MAX_RAND_COUNT => v as usize,
                         _ => return RespValue::error("ERR count value is out of range"),
                     };
-                    use rand::seq::SliceRandom;
+                    use rand::seq::IndexedRandom;
                     let items: Vec<&Bytes> = set.iter().collect();
                     let members: Vec<RespValue> = (0..n)
                         .map(|_| RespValue::bulk_string((*items.choose(&mut rng).unwrap()).clone()))
@@ -175,7 +194,13 @@ pub fn cmd_srandmember(ctx: &mut CommandContext) -> RespValue {
                 }
             }
         }
-        Ok(None) => if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null },
+        Ok(None) => {
+            if count.is_some() {
+                RespValue::array(vec![])
+            } else {
+                RespValue::Null
+            }
+        }
         Err(e) => e,
     }
 }
@@ -194,11 +219,15 @@ pub fn cmd_spop(ctx: &mut CommandContext) -> RespValue {
     match get_set_mut(ctx, &key) {
         Ok(Some(set)) => {
             if set.is_empty() {
-                return if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null };
+                return if count.is_some() {
+                    RespValue::array(vec![])
+                } else {
+                    RespValue::Null
+                };
             }
 
             use rand::seq::IteratorRandom;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             match count {
                 None => {
@@ -208,8 +237,9 @@ pub fn cmd_spop(ctx: &mut CommandContext) -> RespValue {
                     RespValue::bulk_string(member)
                 }
                 Some(n) => {
-                    let to_pop: Vec<Bytes> = set.iter()
-                        .choose_multiple(&mut rng, n.min(set.len()))
+                    let to_pop: Vec<Bytes> = set
+                        .iter()
+                        .sample(&mut rng, n.min(set.len()))
                         .into_iter()
                         .cloned()
                         .collect();
@@ -221,7 +251,13 @@ pub fn cmd_spop(ctx: &mut CommandContext) -> RespValue {
                 }
             }
         }
-        Ok(None) => if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null },
+        Ok(None) => {
+            if count.is_some() {
+                RespValue::array(vec![])
+            } else {
+                RespValue::Null
+            }
+        }
         Err(e) => e,
     }
 }
@@ -344,7 +380,11 @@ pub fn cmd_sintercard(ctx: &mut CommandContext) -> RespValue {
         result = result.intersection(&other).cloned().collect();
     }
 
-    let count = if limit > 0 { result.len().min(limit) } else { result.len() };
+    let count = if limit > 0 {
+        result.len().min(limit)
+    } else {
+        result.len()
+    };
     RespValue::integer(count as i64)
 }
 

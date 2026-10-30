@@ -47,7 +47,9 @@ fn zset_zadd_zrange_zscore() {
     let s = Server::spawn();
     let mut c = s.client().get_connection().unwrap();
 
-    let _: () = c.zadd_multiple("z", &[(1.0, "a"), (2.0, "b"), (3.0, "c")]).unwrap();
+    let _: () = c
+        .zadd_multiple("z", &[(1.0, "a"), (2.0, "b"), (3.0, "c")])
+        .unwrap();
     let items: Vec<String> = c.zrange("z", 0, -1).unwrap();
     assert_eq!(items, vec!["a", "b", "c"]);
 

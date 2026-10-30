@@ -1,6 +1,6 @@
-use bytes::Bytes;
-use crate::protocol::RespValue;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
+use bytes::Bytes;
 
 /// A fixed 40-char hex node ID for standalone mode.
 const NODE_ID: &str = "0000000000000000000000000000000000000000";
@@ -9,13 +9,11 @@ const NODE_ID: &str = "0000000000000000000000000000000000000000";
 /// Supports hash tags: if key contains {xxx}, only xxx is hashed.
 fn crc16_hash_slot(key: &[u8]) -> u16 {
     // Check for hash tag {xxx}
-    if let Some(start) = key.iter().position(|&b| b == b'{') {
-        if let Some(end) = key[start + 1..].iter().position(|&b| b == b'}') {
-            if end > 0 {
-                return crc16::State::<crc16::XMODEM>::calculate(&key[start + 1..start + 1 + end])
-                    % 16384;
-            }
-        }
+    if let Some(start) = key.iter().position(|&b| b == b'{')
+        && let Some(end) = key[start + 1..].iter().position(|&b| b == b'}')
+        && end > 0
+    {
+        return crc16::State::<crc16::XMODEM>::calculate(&key[start + 1..start + 1 + end]) % 16384;
     }
     crc16::State::<crc16::XMODEM>::calculate(key) % 16384
 }

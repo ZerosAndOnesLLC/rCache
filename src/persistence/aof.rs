@@ -1,8 +1,8 @@
 use bytes::Bytes;
-use std::io::{self, Read, Write, BufWriter, BufRead, BufReader};
-use std::path::{Path, PathBuf};
 use std::fs::{File, OpenOptions};
-use std::time::{Instant, Duration};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::storage::Store;
 use crate::storage::types::RedisObject;
@@ -29,8 +29,8 @@ pub enum FsyncMode {
     No,
 }
 
-impl FsyncMode {
-    pub fn from_str(s: &str) -> Self {
+impl From<&str> for FsyncMode {
+    fn from(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "always" => FsyncMode::Always,
             "everysec" => FsyncMode::Everysec,
@@ -104,10 +104,10 @@ impl AofWriter {
 
                 // SELECT db
                 if db_index > 0 {
-                    write_resp_command(&mut writer, &[
-                        Bytes::from("SELECT"),
-                        Bytes::from(db_index.to_string()),
-                    ])?;
+                    write_resp_command(
+                        &mut writer,
+                        &[Bytes::from("SELECT"), Bytes::from(db_index.to_string())],
+                    )?;
                 }
 
                 // Compute the wall-clock baseline once per database. Inside the
@@ -122,11 +122,10 @@ impl AofWriter {
                 for (key, value) in db.iter() {
                     match value {
                         RedisObject::String(s) => {
-                            write_resp_command(&mut writer, &[
-                                Bytes::from("SET"),
-                                key.clone(),
-                                s.clone(),
-                            ])?;
+                            write_resp_command(
+                                &mut writer,
+                                &[Bytes::from("SET"), key.clone(), s.clone()],
+                            )?;
                         }
                         RedisObject::List(list) => {
                             if !list.is_empty() {
@@ -181,28 +180,34 @@ impl AofWriter {
                             }
                         }
                         RedisObject::Json(value) => {
-                            let json_str = serde_json::to_string(value)
-                                .unwrap_or_else(|_| "null".to_string());
-                            write_resp_command(&mut writer, &[
-                                Bytes::from("JSON.SET"),
-                                key.clone(),
-                                Bytes::from("$"),
-                                Bytes::from(json_str),
-                            ])?;
+                            let json_str =
+                                serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
+                            write_resp_command(
+                                &mut writer,
+                                &[
+                                    Bytes::from("JSON.SET"),
+                                    key.clone(),
+                                    Bytes::from("$"),
+                                    Bytes::from(json_str),
+                                ],
+                            )?;
                         }
                     }
 
                     // Write PEXPIREAT if the key has an expiry
-                    if let Some(expire_at) = db.get_expire(key) {
-                        if expire_at > now {
-                            let remaining = expire_at - now;
-                            let expire_ms = now_ms + remaining.as_millis() as u64;
-                            write_resp_command(&mut writer, &[
+                    if let Some(expire_at) = db.get_expire(key)
+                        && expire_at > now
+                    {
+                        let remaining = expire_at - now;
+                        let expire_ms = now_ms + remaining.as_millis() as u64;
+                        write_resp_command(
+                            &mut writer,
+                            &[
                                 Bytes::from("PEXPIREAT"),
                                 key.clone(),
                                 Bytes::from(expire_ms.to_string()),
-                            ])?;
-                        }
+                            ],
+                        )?;
                     }
                 }
             }
@@ -253,235 +258,249 @@ pub fn replay(path: &Path, store: &mut Store) -> io::Result<usize> {
     let mut commands_replayed = 0;
     let mut current_db: usize = 0;
 
-    loop {
-        match read_resp_command(&mut reader)? {
-            Some(args) => {
-                if args.is_empty() {
-                    continue;
-                }
-
-                let cmd_name = String::from_utf8_lossy(&args[0]).to_uppercase();
-
-                match cmd_name.as_str() {
-                    "SELECT" => {
-                        if args.len() >= 2 {
-                            if let Ok(idx) = String::from_utf8_lossy(&args[1]).parse::<usize>() {
-                                if idx < store.db_count() {
-                                    current_db = idx;
-                                }
-                            }
-                        }
-                    }
-                    "SET" => {
-                        if args.len() >= 3 {
-                            let key = args[1].clone();
-                            let value = args[2].clone();
-                            store.db_mut(current_db).set_raw(key, RedisObject::String(value));
-                        }
-                        // Handle SET with EX/PX/EXAT/PXAT options
-                        if args.len() >= 5 {
-                            let key = args[1].clone();
-                            let opt = String::from_utf8_lossy(&args[3]).to_uppercase();
-                            match opt.as_str() {
-                                "EX" => {
-                                    if let Ok(secs) = String::from_utf8_lossy(&args[4]).parse::<u64>() {
-                                        store.db_mut(current_db).set_expire_raw(
-                                            key,
-                                            Instant::now() + Duration::from_secs(secs),
-                                        );
-                                    }
-                                }
-                                "PX" => {
-                                    if let Ok(ms) = String::from_utf8_lossy(&args[4]).parse::<u64>() {
-                                        store.db_mut(current_db).set_expire_raw(
-                                            key,
-                                            Instant::now() + Duration::from_millis(ms),
-                                        );
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    "DEL" | "UNLINK" => {
-                        for arg in &args[1..] {
-                            store.db_mut(current_db).remove(arg);
-                        }
-                    }
-                    "RPUSH" | "LPUSH" => {
-                        if args.len() >= 3 {
-                            let key = args[1].clone();
-                            let db = store.db_mut(current_db);
-                            let list = match db.get_mut(&key) {
-                                Some(RedisObject::List(l)) => l,
-                                _ => {
-                                    db.set_raw(key.clone(), RedisObject::List(std::collections::VecDeque::new()));
-                                    match db.get_mut(&key) {
-                                        Some(RedisObject::List(l)) => l,
-                                        _ => continue,
-                                    }
-                                }
-                            };
-                            for item in &args[2..] {
-                                if cmd_name == "RPUSH" {
-                                    list.push_back(item.clone());
-                                } else {
-                                    list.push_front(item.clone());
-                                }
-                            }
-                        }
-                    }
-                    "SADD" => {
-                        if args.len() >= 3 {
-                            let key = args[1].clone();
-                            let db = store.db_mut(current_db);
-                            let set = match db.get_mut(&key) {
-                                Some(RedisObject::Set(s)) => s,
-                                _ => {
-                                    db.set_raw(key.clone(), RedisObject::Set(std::collections::HashSet::new()));
-                                    match db.get_mut(&key) {
-                                        Some(RedisObject::Set(s)) => s,
-                                        _ => continue,
-                                    }
-                                }
-                            };
-                            for member in &args[2..] {
-                                set.insert(member.clone());
-                            }
-                        }
-                    }
-                    "HSET" => {
-                        if args.len() >= 4 && (args.len() - 2) % 2 == 0 {
-                            let key = args[1].clone();
-                            let db = store.db_mut(current_db);
-                            let hash = match db.get_mut(&key) {
-                                Some(RedisObject::Hash(h)) => h,
-                                _ => {
-                                    db.set_raw(key.clone(), RedisObject::Hash(std::collections::HashMap::new()));
-                                    match db.get_mut(&key) {
-                                        Some(RedisObject::Hash(h)) => h,
-                                        _ => continue,
-                                    }
-                                }
-                            };
-                            for chunk in args[2..].chunks(2) {
-                                if chunk.len() == 2 {
-                                    hash.insert(chunk[0].clone(), chunk[1].clone());
-                                }
-                            }
-                        }
-                    }
-                    "ZADD" => {
-                        if args.len() >= 4 && (args.len() - 2) % 2 == 0 {
-                            let key = args[1].clone();
-                            let db = store.db_mut(current_db);
-                            let zset = match db.get_mut(&key) {
-                                Some(RedisObject::SortedSet(z)) => z,
-                                _ => {
-                                    db.set_raw(key.clone(), RedisObject::SortedSet(
-                                        crate::storage::types::SortedSetData::new()
-                                    ));
-                                    match db.get_mut(&key) {
-                                        Some(RedisObject::SortedSet(z)) => z,
-                                        _ => continue,
-                                    }
-                                }
-                            };
-                            for chunk in args[2..].chunks(2) {
-                                if chunk.len() == 2 {
-                                    if let Ok(score) = String::from_utf8_lossy(&chunk[0]).parse::<f64>() {
-                                        zset.insert(chunk[1].clone(), score);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "EXPIRE" => {
-                        if args.len() >= 3 {
-                            let key = args[1].clone();
-                            if let Ok(secs) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
-                                let db = store.db_mut(current_db);
-                                if db.exists(&key) {
-                                    db.set_expire_raw(key, Instant::now() + Duration::from_secs(secs));
-                                }
-                            }
-                        }
-                    }
-                    "PEXPIRE" => {
-                        if args.len() >= 3 {
-                            let key = args[1].clone();
-                            if let Ok(ms) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
-                                let db = store.db_mut(current_db);
-                                if db.exists(&key) {
-                                    db.set_expire_raw(key, Instant::now() + Duration::from_millis(ms));
-                                }
-                            }
-                        }
-                    }
-                    "EXPIREAT" => {
-                        if args.len() >= 3 {
-                            let key = args[1].clone();
-                            if let Ok(ts) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
-                                let now_secs = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs();
-                                if ts > now_secs {
-                                    let db = store.db_mut(current_db);
-                                    if db.exists(&key) {
-                                        db.set_expire_raw(key, Instant::now() + Duration::from_secs(ts - now_secs));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "PEXPIREAT" => {
-                        if args.len() >= 3 {
-                            let key = args[1].clone();
-                            if let Ok(ts_ms) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
-                                let now_ms = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_millis() as u64;
-                                if ts_ms > now_ms {
-                                    let db = store.db_mut(current_db);
-                                    if db.exists(&key) {
-                                        db.set_expire_raw(key, Instant::now() + Duration::from_millis(ts_ms - now_ms));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "PERSIST" => {
-                        if args.len() >= 2 {
-                            store.db_mut(current_db).persist(&args[1]);
-                        }
-                    }
-                    "FLUSHDB" => {
-                        store.db_mut(current_db).flush();
-                    }
-                    "FLUSHALL" => {
-                        store.flush_all();
-                    }
-                    "JSON.SET" => {
-                        if args.len() >= 4 {
-                            let key = args[1].clone();
-                            let json_str = String::from_utf8_lossy(&args[3]);
-                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                                store.db_mut(current_db).set_raw(key, RedisObject::Json(value));
-                            }
-                        }
-                    }
-                    _ => {
-                        // Skip unknown commands during replay
-                        tracing::debug!("AOF replay: skipping unknown command '{}'", cmd_name);
-                    }
-                }
-
-                commands_replayed += 1;
-            }
-            None => break,
+    while let Some(args) = read_resp_command(&mut reader)? {
+        if args.is_empty() {
+            continue;
         }
+
+        let cmd_name = String::from_utf8_lossy(&args[0]).to_uppercase();
+
+        match cmd_name.as_str() {
+            "SELECT" => {
+                if args.len() >= 2
+                    && let Ok(idx) = String::from_utf8_lossy(&args[1]).parse::<usize>()
+                    && idx < store.db_count()
+                {
+                    current_db = idx;
+                }
+            }
+            "SET" => {
+                if args.len() >= 3 {
+                    let key = args[1].clone();
+                    let value = args[2].clone();
+                    store
+                        .db_mut(current_db)
+                        .set_raw(key, RedisObject::String(value));
+                }
+                // Handle SET with EX/PX/EXAT/PXAT options
+                if args.len() >= 5 {
+                    let key = args[1].clone();
+                    let opt = String::from_utf8_lossy(&args[3]).to_uppercase();
+                    match opt.as_str() {
+                        "EX" => {
+                            if let Ok(secs) = String::from_utf8_lossy(&args[4]).parse::<u64>() {
+                                store.db_mut(current_db).set_expire_raw(
+                                    key,
+                                    Instant::now() + Duration::from_secs(secs),
+                                );
+                            }
+                        }
+                        "PX" => {
+                            if let Ok(ms) = String::from_utf8_lossy(&args[4]).parse::<u64>() {
+                                store.db_mut(current_db).set_expire_raw(
+                                    key,
+                                    Instant::now() + Duration::from_millis(ms),
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "DEL" | "UNLINK" => {
+                for arg in &args[1..] {
+                    store.db_mut(current_db).remove(arg);
+                }
+            }
+            "RPUSH" | "LPUSH" => {
+                if args.len() >= 3 {
+                    let key = args[1].clone();
+                    let db = store.db_mut(current_db);
+                    let list = match db.get_mut(&key) {
+                        Some(RedisObject::List(l)) => l,
+                        _ => {
+                            db.set_raw(
+                                key.clone(),
+                                RedisObject::List(std::collections::VecDeque::new()),
+                            );
+                            match db.get_mut(&key) {
+                                Some(RedisObject::List(l)) => l,
+                                _ => continue,
+                            }
+                        }
+                    };
+                    for item in &args[2..] {
+                        if cmd_name == "RPUSH" {
+                            list.push_back(item.clone());
+                        } else {
+                            list.push_front(item.clone());
+                        }
+                    }
+                }
+            }
+            "SADD" => {
+                if args.len() >= 3 {
+                    let key = args[1].clone();
+                    let db = store.db_mut(current_db);
+                    let set = match db.get_mut(&key) {
+                        Some(RedisObject::Set(s)) => s,
+                        _ => {
+                            db.set_raw(
+                                key.clone(),
+                                RedisObject::Set(std::collections::HashSet::new()),
+                            );
+                            match db.get_mut(&key) {
+                                Some(RedisObject::Set(s)) => s,
+                                _ => continue,
+                            }
+                        }
+                    };
+                    for member in &args[2..] {
+                        set.insert(member.clone());
+                    }
+                }
+            }
+            "HSET" => {
+                if args.len() >= 4 && (args.len() - 2) % 2 == 0 {
+                    let key = args[1].clone();
+                    let db = store.db_mut(current_db);
+                    let hash = match db.get_mut(&key) {
+                        Some(RedisObject::Hash(h)) => h,
+                        _ => {
+                            db.set_raw(
+                                key.clone(),
+                                RedisObject::Hash(std::collections::HashMap::new()),
+                            );
+                            match db.get_mut(&key) {
+                                Some(RedisObject::Hash(h)) => h,
+                                _ => continue,
+                            }
+                        }
+                    };
+                    for chunk in args[2..].chunks(2) {
+                        if chunk.len() == 2 {
+                            hash.insert(chunk[0].clone(), chunk[1].clone());
+                        }
+                    }
+                }
+            }
+            "ZADD" => {
+                if args.len() >= 4 && (args.len() - 2) % 2 == 0 {
+                    let key = args[1].clone();
+                    let db = store.db_mut(current_db);
+                    let zset = match db.get_mut(&key) {
+                        Some(RedisObject::SortedSet(z)) => z,
+                        _ => {
+                            db.set_raw(
+                                key.clone(),
+                                RedisObject::SortedSet(crate::storage::types::SortedSetData::new()),
+                            );
+                            match db.get_mut(&key) {
+                                Some(RedisObject::SortedSet(z)) => z,
+                                _ => continue,
+                            }
+                        }
+                    };
+                    for chunk in args[2..].chunks(2) {
+                        if chunk.len() == 2
+                            && let Ok(score) = String::from_utf8_lossy(&chunk[0]).parse::<f64>()
+                        {
+                            zset.insert(chunk[1].clone(), score);
+                        }
+                    }
+                }
+            }
+            "EXPIRE" => {
+                if args.len() >= 3 {
+                    let key = args[1].clone();
+                    if let Ok(secs) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
+                        let db = store.db_mut(current_db);
+                        if db.exists(&key) {
+                            db.set_expire_raw(key, Instant::now() + Duration::from_secs(secs));
+                        }
+                    }
+                }
+            }
+            "PEXPIRE" => {
+                if args.len() >= 3 {
+                    let key = args[1].clone();
+                    if let Ok(ms) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
+                        let db = store.db_mut(current_db);
+                        if db.exists(&key) {
+                            db.set_expire_raw(key, Instant::now() + Duration::from_millis(ms));
+                        }
+                    }
+                }
+            }
+            "EXPIREAT" => {
+                if args.len() >= 3 {
+                    let key = args[1].clone();
+                    if let Ok(ts) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
+                        let now_secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        if ts > now_secs {
+                            let db = store.db_mut(current_db);
+                            if db.exists(&key) {
+                                db.set_expire_raw(
+                                    key,
+                                    Instant::now() + Duration::from_secs(ts - now_secs),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            "PEXPIREAT" => {
+                if args.len() >= 3 {
+                    let key = args[1].clone();
+                    if let Ok(ts_ms) = String::from_utf8_lossy(&args[2]).parse::<u64>() {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        if ts_ms > now_ms {
+                            let db = store.db_mut(current_db);
+                            if db.exists(&key) {
+                                db.set_expire_raw(
+                                    key,
+                                    Instant::now() + Duration::from_millis(ts_ms - now_ms),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            "PERSIST" => {
+                if args.len() >= 2 {
+                    store.db_mut(current_db).persist(&args[1]);
+                }
+            }
+            "FLUSHDB" => {
+                store.db_mut(current_db).flush();
+            }
+            "FLUSHALL" => {
+                store.flush_all();
+            }
+            "JSON.SET" => {
+                if args.len() >= 4 {
+                    let key = args[1].clone();
+                    let json_str = String::from_utf8_lossy(&args[3]);
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                        store
+                            .db_mut(current_db)
+                            .set_raw(key, RedisObject::Json(value));
+                    }
+                }
+            }
+            _ => {
+                // Skip unknown commands during replay
+                tracing::debug!("AOF replay: skipping unknown command '{}'", cmd_name);
+            }
+        }
+
+        commands_replayed += 1;
     }
 
     Ok(commands_replayed)
@@ -554,23 +573,79 @@ fn read_resp_command(reader: &mut BufReader<File>) -> io::Result<Option<Vec<Byte
 
 /// Set of write commands that should be logged to AOF.
 pub fn is_write_command(cmd: &str) -> bool {
-    matches!(cmd,
-        "SET" | "SETNX" | "SETEX" | "PSETEX" | "MSET" | "MSETNX" |
-        "APPEND" | "SETRANGE" | "INCR" | "DECR" | "INCRBY" | "DECRBY" | "INCRBYFLOAT" |
-        "GETSET" | "GETDEL" | "GETEX" |
-        "DEL" | "UNLINK" |
-        "EXPIRE" | "PEXPIRE" | "EXPIREAT" | "PEXPIREAT" | "PERSIST" |
-        "RENAME" | "RENAMENX" | "COPY" |
-        "LPUSH" | "RPUSH" | "LPUSHX" | "RPUSHX" | "LPOP" | "RPOP" |
-        "LSET" | "LINSERT" | "LREM" | "LTRIM" | "LMOVE" | "LMPOP" |
-        "SADD" | "SREM" | "SPOP" | "SMOVE" |
-        "SDIFFSTORE" | "SINTERSTORE" | "SUNIONSTORE" |
-        "HSET" | "HSETNX" | "HDEL" | "HINCRBY" | "HINCRBYFLOAT" |
-        "ZADD" | "ZREM" | "ZINCRBY" | "ZPOPMIN" | "ZPOPMAX" |
-        "ZUNIONSTORE" | "ZINTERSTORE" | "ZDIFFSTORE" |
-        "FLUSHDB" | "FLUSHALL" | "SWAPDB" | "SELECT" |
-        "JSON.SET" | "JSON.DEL" | "JSON.NUMINCRBY" | "JSON.STRAPPEND" |
-        "JSON.ARRAPPEND" | "JSON.ARRPOP" | "JSON.TOGGLE" | "JSON.NUMMULTBY" | "JSON.CLEAR"
+    matches!(
+        cmd,
+        "SET"
+            | "SETNX"
+            | "SETEX"
+            | "PSETEX"
+            | "MSET"
+            | "MSETNX"
+            | "APPEND"
+            | "SETRANGE"
+            | "INCR"
+            | "DECR"
+            | "INCRBY"
+            | "DECRBY"
+            | "INCRBYFLOAT"
+            | "GETSET"
+            | "GETDEL"
+            | "GETEX"
+            | "DEL"
+            | "UNLINK"
+            | "EXPIRE"
+            | "PEXPIRE"
+            | "EXPIREAT"
+            | "PEXPIREAT"
+            | "PERSIST"
+            | "RENAME"
+            | "RENAMENX"
+            | "COPY"
+            | "LPUSH"
+            | "RPUSH"
+            | "LPUSHX"
+            | "RPUSHX"
+            | "LPOP"
+            | "RPOP"
+            | "LSET"
+            | "LINSERT"
+            | "LREM"
+            | "LTRIM"
+            | "LMOVE"
+            | "LMPOP"
+            | "SADD"
+            | "SREM"
+            | "SPOP"
+            | "SMOVE"
+            | "SDIFFSTORE"
+            | "SINTERSTORE"
+            | "SUNIONSTORE"
+            | "HSET"
+            | "HSETNX"
+            | "HDEL"
+            | "HINCRBY"
+            | "HINCRBYFLOAT"
+            | "ZADD"
+            | "ZREM"
+            | "ZINCRBY"
+            | "ZPOPMIN"
+            | "ZPOPMAX"
+            | "ZUNIONSTORE"
+            | "ZINTERSTORE"
+            | "ZDIFFSTORE"
+            | "FLUSHDB"
+            | "FLUSHALL"
+            | "SWAPDB"
+            | "SELECT"
+            | "JSON.SET"
+            | "JSON.DEL"
+            | "JSON.NUMINCRBY"
+            | "JSON.STRAPPEND"
+            | "JSON.ARRAPPEND"
+            | "JSON.ARRPOP"
+            | "JSON.TOGGLE"
+            | "JSON.NUMMULTBY"
+            | "JSON.CLEAR"
     )
 }
 
@@ -590,20 +665,23 @@ mod tests {
         // Write some commands
         {
             let mut writer = AofWriter::open(&path, FsyncMode::Always).unwrap();
-            writer.append(&[
-                Bytes::from("SET"),
-                Bytes::from("key1"),
-                Bytes::from("value1"),
-            ]).unwrap();
-            writer.append(&[
-                Bytes::from("SET"),
-                Bytes::from("key2"),
-                Bytes::from("value2"),
-            ]).unwrap();
-            writer.append(&[
-                Bytes::from("DEL"),
-                Bytes::from("key1"),
-            ]).unwrap();
+            writer
+                .append(&[
+                    Bytes::from("SET"),
+                    Bytes::from("key1"),
+                    Bytes::from("value1"),
+                ])
+                .unwrap();
+            writer
+                .append(&[
+                    Bytes::from("SET"),
+                    Bytes::from("key2"),
+                    Bytes::from("value2"),
+                ])
+                .unwrap();
+            writer
+                .append(&[Bytes::from("DEL"), Bytes::from("key1")])
+                .unwrap();
         }
 
         // Replay
@@ -627,11 +705,13 @@ mod tests {
             let mut writer = AofWriter::open(&path, FsyncMode::Always).unwrap();
             // Set and overwrite many times
             for i in 0..100 {
-                writer.append(&[
-                    Bytes::from("SET"),
-                    Bytes::from("counter"),
-                    Bytes::from(i.to_string()),
-                ]).unwrap();
+                writer
+                    .append(&[
+                        Bytes::from("SET"),
+                        Bytes::from("counter"),
+                        Bytes::from(i.to_string()),
+                    ])
+                    .unwrap();
             }
 
             // Now rewrite from store state

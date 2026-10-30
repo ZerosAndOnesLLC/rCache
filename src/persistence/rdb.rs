@@ -4,8 +4,8 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::storage::types::{RedisObject, SortedSetData, StreamData, StreamId};
 use crate::storage::Store;
+use crate::storage::types::{RedisObject, SortedSetData, StreamData, StreamId};
 
 /// RDB file magic header.
 const RDB_MAGIC: &[u8] = b"REDIS0011";
@@ -26,7 +26,10 @@ fn read_bounded_count(data: &[u8], cursor: usize, field: &str) -> io::Result<(u3
     if count > MAX_RDB_COLLECTION_SIZE {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("RDB {} count {} exceeds maximum {}", field, count, MAX_RDB_COLLECTION_SIZE),
+            format!(
+                "RDB {} count {} exceeds maximum {}",
+                field, count, MAX_RDB_COLLECTION_SIZE
+            ),
         ));
     }
     Ok((count, c))
@@ -69,9 +72,8 @@ pub fn save(store: &Store, path: &Path) -> io::Result<()> {
         write_u32_le(&mut file, db_index as u32)?;
 
         // Collect expiry info
-        let expires: HashMap<Bytes, Instant> = db.expires_iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
+        let expires: HashMap<Bytes, Instant> =
+            db.expires_iter().map(|(k, v)| (k.clone(), *v)).collect();
 
         // Write each key-value pair
         for (key, value) in db.iter() {
@@ -192,11 +194,17 @@ pub fn save(store: &Store, path: &Path) -> io::Result<()> {
 pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
     let data = std::fs::read(path)?;
     if data.len() < RDB_MAGIC.len() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "RDB file too short"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "RDB file too short",
+        ));
     }
 
     if &data[..RDB_MAGIC.len()] != RDB_MAGIC {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid RDB magic header"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid RDB magic header",
+        ));
     }
 
     let mut store = Store::new(num_databases);
@@ -238,7 +246,8 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
             RDB_OPCODE_EOF => {
                 // Verify CRC64 if present (8 bytes after EOF marker)
                 if cursor + 8 <= data.len() {
-                    let stored_crc = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
+                    let stored_crc =
+                        u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
                     // A stored CRC of 0 means checksums were disabled when the
                     // file was written; only enforce when a checksum is present.
                     if stored_crc != 0 {
@@ -263,14 +272,20 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
             RDB_OPCODE_EXPIRETIME_MS => {
                 // Read expiry timestamp, then the type byte and entry
                 if cursor + 8 > data.len() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated expiry"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "truncated expiry",
+                    ));
                 }
                 let expire_ms = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
                 cursor += 8;
 
                 // Now read the actual type + key + value
                 if cursor >= data.len() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated entry after expiry"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "truncated entry after expiry",
+                    ));
                 }
                 let type_byte = data[cursor];
                 cursor += 1;
@@ -290,7 +305,8 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
                     db.remove(&key);
                 }
             }
-            type_byte @ (RDB_TYPE_STRING | RDB_TYPE_LIST | RDB_TYPE_SET | RDB_TYPE_SORTEDSET | RDB_TYPE_HASH | RDB_TYPE_STREAM | RDB_TYPE_JSON) => {
+            type_byte @ (RDB_TYPE_STRING | RDB_TYPE_LIST | RDB_TYPE_SET | RDB_TYPE_SORTEDSET
+            | RDB_TYPE_HASH | RDB_TYPE_STREAM | RDB_TYPE_JSON) => {
                 let (key, value, new_cursor) = read_entry(&data, cursor, type_byte)?;
                 cursor = new_cursor;
                 store.db_mut(current_db).set_raw(key, value);
@@ -308,7 +324,11 @@ pub fn load(path: &Path, num_databases: usize) -> io::Result<Store> {
 }
 
 /// Read a single key-value entry from the data buffer.
-fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, RedisObject, usize)> {
+fn read_entry(
+    data: &[u8],
+    cursor: usize,
+    type_byte: u8,
+) -> io::Result<(Bytes, RedisObject, usize)> {
     let (key, mut cursor) = read_bytes(data, cursor)?;
 
     let value = match type_byte {
@@ -347,7 +367,10 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
                 let (member, c) = read_bytes(data, cursor)?;
                 cursor = c;
                 if cursor + 8 > data.len() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated score"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "truncated score",
+                    ));
                 }
                 let score = f64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
                 cursor += 8;
@@ -371,7 +394,10 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
         RDB_TYPE_STREAM => {
             // Read last_id
             if cursor + 16 > data.len() {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated stream last_id"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated stream last_id",
+                ));
             }
             let last_ms = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
             cursor += 8;
@@ -379,14 +405,20 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
             cursor += 8;
 
             let mut stream = StreamData::new();
-            stream.last_id = StreamId { ms: last_ms, seq: last_seq };
+            stream.last_id = StreamId {
+                ms: last_ms,
+                seq: last_seq,
+            };
 
             // Read entries
             let (entry_count, c) = read_bounded_count(data, cursor, "stream entries")?;
             cursor = c;
             for _ in 0..entry_count {
                 if cursor + 16 > data.len() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated stream entry id"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "truncated stream entry id",
+                    ));
                 }
                 let ms = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
                 cursor += 8;
@@ -412,7 +444,10 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
                 let (name, c) = read_bytes(data, cursor)?;
                 cursor = c;
                 if cursor + 16 > data.len() {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated group last_delivered"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "truncated group last_delivered",
+                    ));
                 }
                 let ld_ms = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap());
                 cursor += 8;
@@ -427,7 +462,10 @@ fn read_entry(data: &[u8], cursor: usize, type_byte: u8) -> io::Result<(Bytes, R
                 cursor = c;
                 let _ = consumer_count;
 
-                let group = crate::storage::types::ConsumerGroup::new(StreamId { ms: ld_ms, seq: ld_seq });
+                let group = crate::storage::types::ConsumerGroup::new(StreamId {
+                    ms: ld_ms,
+                    seq: ld_seq,
+                });
                 stream.groups.insert(name, group);
             }
 
@@ -476,7 +514,10 @@ fn read_bytes(data: &[u8], cursor: usize) -> io::Result<(Bytes, usize)> {
     let (len, cursor) = read_u32_le(data, cursor)?;
     let len = len as usize;
     if cursor + len > data.len() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated bytes"));
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "truncated bytes",
+        ));
     }
     let bytes = Bytes::copy_from_slice(&data[cursor..cursor + len]);
     Ok((bytes, cursor + len))
@@ -484,7 +525,10 @@ fn read_bytes(data: &[u8], cursor: usize) -> io::Result<(Bytes, usize)> {
 
 fn read_u32_le(data: &[u8], cursor: usize) -> io::Result<(u32, usize)> {
     if cursor + 4 > data.len() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated u32"));
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "truncated u32",
+        ));
     }
     let val = u32::from_le_bytes(data[cursor..cursor + 4].try_into().unwrap());
     Ok((val, cursor + 4))
@@ -523,10 +567,9 @@ mod tests {
             Bytes::from("hello"),
             RedisObject::String(Bytes::from("world")),
         );
-        store.db_mut(0).set_raw(
-            Bytes::from("foo"),
-            RedisObject::String(Bytes::from("bar")),
-        );
+        store
+            .db_mut(0)
+            .set_raw(Bytes::from("foo"), RedisObject::String(Bytes::from("bar")));
 
         save(&store, &path).unwrap();
 
@@ -547,7 +590,9 @@ mod tests {
         list.push_back(Bytes::from("a"));
         list.push_back(Bytes::from("b"));
         list.push_back(Bytes::from("c"));
-        store.db_mut(0).set_raw(Bytes::from("mylist"), RedisObject::List(list));
+        store
+            .db_mut(0)
+            .set_raw(Bytes::from("mylist"), RedisObject::List(list));
 
         save(&store, &path).unwrap();
 
@@ -567,7 +612,9 @@ mod tests {
         let mut set = HashSet::new();
         set.insert(Bytes::from("x"));
         set.insert(Bytes::from("y"));
-        store.db_mut(0).set_raw(Bytes::from("myset"), RedisObject::Set(set));
+        store
+            .db_mut(0)
+            .set_raw(Bytes::from("myset"), RedisObject::Set(set));
 
         save(&store, &path).unwrap();
 
@@ -587,7 +634,9 @@ mod tests {
         let mut hash = HashMap::new();
         hash.insert(Bytes::from("field1"), Bytes::from("val1"));
         hash.insert(Bytes::from("field2"), Bytes::from("val2"));
-        store.db_mut(0).set_raw(Bytes::from("myhash"), RedisObject::Hash(hash));
+        store
+            .db_mut(0)
+            .set_raw(Bytes::from("myhash"), RedisObject::Hash(hash));
 
         save(&store, &path).unwrap();
 
@@ -607,7 +656,9 @@ mod tests {
         let mut zset = SortedSetData::new();
         zset.insert(Bytes::from("alice"), 1.0);
         zset.insert(Bytes::from("bob"), 2.5);
-        store.db_mut(0).set_raw(Bytes::from("myzset"), RedisObject::SortedSet(zset));
+        store
+            .db_mut(0)
+            .set_raw(Bytes::from("myzset"), RedisObject::SortedSet(zset));
 
         save(&store, &path).unwrap();
 
@@ -653,14 +704,12 @@ mod tests {
         let path = dir.join("test.rdb");
 
         let mut store = Store::new(16);
-        store.db_mut(0).set_raw(
-            Bytes::from("k0"),
-            RedisObject::String(Bytes::from("v0")),
-        );
-        store.db_mut(3).set_raw(
-            Bytes::from("k3"),
-            RedisObject::String(Bytes::from("v3")),
-        );
+        store
+            .db_mut(0)
+            .set_raw(Bytes::from("k0"), RedisObject::String(Bytes::from("v0")));
+        store
+            .db_mut(3)
+            .set_raw(Bytes::from("k3"), RedisObject::String(Bytes::from("v3")));
 
         save(&store, &path).unwrap();
 

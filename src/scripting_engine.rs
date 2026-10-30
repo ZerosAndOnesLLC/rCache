@@ -9,7 +9,7 @@ use crate::storage::Store;
 /// with the EVALSHA command (Redis clients send 40-char hex SHA-1 digests).
 fn sha1_hex(script: &str) -> String {
     use sha1::{Digest, Sha1};
-    format!("{:x}", Sha1::digest(script.as_bytes()))
+    crate::hex::encode(&Sha1::digest(script.as_bytes()))
 }
 
 /// The script cache: maps SHA1 hex -> script source.
@@ -48,6 +48,12 @@ impl ScriptCache {
     pub fn flush(&self) {
         let mut scripts = self.scripts.lock().unwrap_or_else(|e| e.into_inner());
         scripts.clear();
+    }
+}
+
+impl Default for ScriptCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -164,6 +170,12 @@ impl FunctionLibrary {
     }
 }
 
+impl Default for FunctionLibrary {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Hard memory ceiling for a single script's Lua VM (256 MB). Prevents a script
 /// from allocating until the host is OOM-killed.
 const SCRIPT_MEMORY_LIMIT: usize = 256 * 1024 * 1024;
@@ -189,14 +201,17 @@ pub fn execute_script(
 
     let lua = Lua::new();
 
-    // Bound the VM's memory so a script cannot exhaust host RAM.
-    let _ = lua.set_memory_limit(SCRIPT_MEMORY_LIMIT);
+    // Bound the VM's memory so a script cannot exhaust host RAM. Fail closed:
+    // never run a script without its limits in place.
+    if let Err(e) = lua.set_memory_limit(SCRIPT_MEMORY_LIMIT) {
+        return RespValue::error(format!("ERR failed to set script memory limit: {}", e));
+    }
 
     // Abort the script if it runs past its wall-clock budget. The hook fires
     // every N instructions; returning an error unwinds the Lua call.
     let deadline = std::time::Duration::from_millis(SCRIPT_TIMEOUT_MS);
     let started = std::time::Instant::now();
-    lua.set_hook(
+    if let Err(e) = lua.set_hook(
         mlua::HookTriggers::new().every_nth_instruction(100_000),
         move |_lua, _debug| {
             if started.elapsed() > deadline {
@@ -207,7 +222,9 @@ pub fn execute_script(
                 Ok(mlua::VmState::Continue)
             }
         },
-    );
+    ) {
+        return RespValue::error(format!("ERR failed to set script time limit: {}", e));
+    }
 
     // Set up the sandbox: remove dangerous globals
     let sandbox_result = lua.scope(|_scope| {
@@ -234,16 +251,14 @@ pub fn execute_script(
         // Set KEYS table
         let keys_table = lua.create_table()?;
         for (i, key) in keys.iter().enumerate() {
-            keys_table
-                .set(i + 1, String::from_utf8_lossy(key).to_string())?;
+            keys_table.set(i + 1, String::from_utf8_lossy(key).to_string())?;
         }
         globals.set("KEYS", keys_table)?;
 
         // Set ARGV table
         let argv_table = lua.create_table()?;
         for (i, arg) in argv.iter().enumerate() {
-            argv_table
-                .set(i + 1, String::from_utf8_lossy(arg).to_string())?;
+            argv_table.set(i + 1, String::from_utf8_lossy(arg).to_string())?;
         }
         globals.set("ARGV", argv_table)?;
 
@@ -293,7 +308,7 @@ pub fn execute_script(
                 }
 
                 let mut store_ref = store_cell.borrow_mut();
-                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args, readonly);
+                let resp = execute_redis_command(&mut store_ref, db_idx, &str_args, readonly);
                 resp_to_lua(lua_ctx, &resp)
             })?;
 
@@ -324,7 +339,7 @@ pub fn execute_script(
                 }
 
                 let mut store_ref = store_cell.borrow_mut();
-                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args, readonly);
+                let resp = execute_redis_command(&mut store_ref, db_idx, &str_args, readonly);
                 match &resp {
                     RespValue::Error(e) => {
                         let err_table = lua_ctx.create_table()?;
@@ -399,16 +414,21 @@ fn execute_redis_command(
     // without bound and overflow the native stack, aborting the process.
     if matches!(
         cmd.as_str(),
-        "EVAL" | "EVALSHA" | "EVAL_RO" | "EVALSHA_RO" | "FCALL" | "FCALL_RO" | "FUNCTION" | "SCRIPT"
+        "EVAL"
+            | "EVALSHA"
+            | "EVAL_RO"
+            | "EVALSHA_RO"
+            | "FCALL"
+            | "FCALL_RO"
+            | "FUNCTION"
+            | "SCRIPT"
     ) {
         return RespValue::error("ERR This Redis command is not allowed from script");
     }
 
     // In read-only script context, reject write commands.
     if readonly && crate::persistence::aof::is_write_command(&cmd) {
-        return RespValue::error(
-            "ERR Write commands are not allowed from read-only scripts.",
-        );
+        return RespValue::error("ERR Write commands are not allowed from read-only scripts.");
     }
 
     // Block non-deterministic commands whose output could drive a write, so a
@@ -417,8 +437,15 @@ fn execute_redis_command(
     // deterministic-script requirement).
     if matches!(
         cmd.as_str(),
-        "RANDOMKEY" | "SRANDMEMBER" | "ZRANDMEMBER" | "HRANDFIELD" | "TIME"
-            | "SCAN" | "SSCAN" | "HSCAN" | "ZSCAN"
+        "RANDOMKEY"
+            | "SRANDMEMBER"
+            | "ZRANDMEMBER"
+            | "HRANDFIELD"
+            | "TIME"
+            | "SCAN"
+            | "SSCAN"
+            | "HSCAN"
+            | "ZSCAN"
     ) {
         return RespValue::error(format!(
             "ERR '{}' is not allowed from script: it is non-deterministic",
@@ -443,7 +470,7 @@ fn execute_redis_command(
 }
 
 /// Convert a RespValue to a Lua value.
-fn resp_to_lua<'a>(lua: &'a mlua::Lua, resp: &RespValue) -> mlua::Result<mlua::Value> {
+fn resp_to_lua(lua: &mlua::Lua, resp: &RespValue) -> mlua::Result<mlua::Value> {
     match resp {
         RespValue::SimpleString(s) => {
             let t = lua.create_table()?;
@@ -487,9 +514,7 @@ fn lua_to_resp(val: &mlua::Value) -> RespValue {
                 RespValue::bulk_string(Bytes::from(n.to_string()))
             }
         }
-        mlua::Value::String(s) => {
-            RespValue::bulk_string(Bytes::from(s.as_bytes().to_vec()))
-        }
+        mlua::Value::String(s) => RespValue::bulk_string(Bytes::from(s.as_bytes().to_vec())),
         mlua::Value::Table(t) => {
             // Check if it's an error table {err = "..."}
             if let Ok(err) = t.get::<String>("err") {
@@ -603,10 +628,7 @@ mod tests {
             0,
             false,
         );
-        // pcall should catch the error
-        match result {
-            RespValue::BulkString(_) => {} // Got the error string back
-            _ => {} // Any non-panic result is fine
-        }
+        // pcall should catch the error; any non-panic result is fine.
+        let _ = result;
     }
 }

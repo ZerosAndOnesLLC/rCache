@@ -1,6 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::protocol::RespValue;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// SAVE command - blocking foreground RDB save.
 pub fn cmd_save(ctx: &mut CommandContext) -> RespValue {
@@ -74,10 +74,13 @@ pub fn cmd_bgrewriteaof(ctx: &mut CommandContext) -> RespValue {
 }
 
 /// Helper to write all store data as AOF commands into an already-open file.
-fn rewrite_aof_from_store(store: &crate::storage::Store, file: std::fs::File) -> std::io::Result<()> {
-    use bytes::Bytes;
-    use std::io::{Write, BufWriter};
+fn rewrite_aof_from_store(
+    store: &crate::storage::Store,
+    file: std::fs::File,
+) -> std::io::Result<()> {
     use crate::storage::types::RedisObject;
+    use bytes::Bytes;
+    use std::io::{BufWriter, Write};
 
     let mut writer = BufWriter::new(file);
     let now = std::time::Instant::now();
@@ -89,24 +92,19 @@ fn rewrite_aof_from_store(store: &crate::storage::Store, file: std::fs::File) ->
         }
 
         if db_index > 0 {
-            write_cmd(&mut writer, &[
-                Bytes::from("SELECT"),
-                Bytes::from(db_index.to_string()),
-            ])?;
+            write_cmd(
+                &mut writer,
+                &[Bytes::from("SELECT"), Bytes::from(db_index.to_string())],
+            )?;
         }
 
-        let expires: std::collections::HashMap<Bytes, std::time::Instant> = db.expires_iter()
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
+        let expires: std::collections::HashMap<Bytes, std::time::Instant> =
+            db.expires_iter().map(|(k, v)| (k.clone(), *v)).collect();
 
         for (key, value) in db.iter() {
             match value {
                 RedisObject::String(s) => {
-                    write_cmd(&mut writer, &[
-                        Bytes::from("SET"),
-                        key.clone(),
-                        s.clone(),
-                    ])?;
+                    write_cmd(&mut writer, &[Bytes::from("SET"), key.clone(), s.clone()])?;
                 }
                 RedisObject::List(list) => {
                     if !list.is_empty() {
@@ -161,31 +159,37 @@ fn rewrite_aof_from_store(store: &crate::storage::Store, file: std::fs::File) ->
                     }
                 }
                 RedisObject::Json(value) => {
-                    let json_str = serde_json::to_string(value)
-                        .unwrap_or_else(|_| "null".to_string());
-                    write_cmd(&mut writer, &[
-                        Bytes::from("JSON.SET"),
-                        key.clone(),
-                        Bytes::from("$"),
-                        Bytes::from(json_str),
-                    ])?;
+                    let json_str =
+                        serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
+                    write_cmd(
+                        &mut writer,
+                        &[
+                            Bytes::from("JSON.SET"),
+                            key.clone(),
+                            Bytes::from("$"),
+                            Bytes::from(json_str),
+                        ],
+                    )?;
                 }
             }
 
-            if let Some(expire_at) = expires.get(key) {
-                if *expire_at > now {
-                    let remaining = *expire_at - now;
-                    let now_ms = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64;
-                    let expire_ms = now_ms + remaining.as_millis() as u64;
-                    write_cmd(&mut writer, &[
+            if let Some(expire_at) = expires.get(key)
+                && *expire_at > now
+            {
+                let remaining = *expire_at - now;
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                let expire_ms = now_ms + remaining.as_millis() as u64;
+                write_cmd(
+                    &mut writer,
+                    &[
                         Bytes::from("PEXPIREAT"),
                         key.clone(),
                         Bytes::from(expire_ms.to_string()),
-                    ])?;
-                }
+                    ],
+                )?;
             }
         }
     }

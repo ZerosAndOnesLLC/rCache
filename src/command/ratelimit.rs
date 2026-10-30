@@ -1,9 +1,9 @@
 use bytes::Bytes;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
 
 // ============================================================================
 // Rate Limiting Commands
@@ -162,7 +162,7 @@ fn set_tb_last_refill(data: &mut [u8], ms: u64) {
     data[29..37].copy_from_slice(&ms.to_le_bytes());
 }
 
-fn tb_refill(data: &mut Vec<u8>) {
+fn tb_refill(data: &mut [u8]) {
     let now = now_ms();
     let last = tb_last_refill(data);
     let elapsed_ms = now.saturating_sub(last);
@@ -177,7 +177,7 @@ fn tb_refill(data: &mut Vec<u8>) {
 }
 
 fn is_ratelimit(data: &[u8]) -> bool {
-    data.len() >= RL_HEADER_LEN + 1 && &data[0..RL_HEADER_LEN] == RL_HEADER
+    data.len() > RL_HEADER_LEN && &data[0..RL_HEADER_LEN] == RL_HEADER
 }
 
 // ============================================================================
@@ -217,9 +217,7 @@ pub fn cmd_ratelimit_check(ctx: &mut CommandContext) -> RespValue {
                 } else if b.is_empty() {
                     new_sliding_window(max_requests, window_ms)
                 } else if is_ratelimit(b) {
-                    return RespValue::error(
-                        "WRONGTYPE Key holds a different rate limit type",
-                    );
+                    return RespValue::error("WRONGTYPE Key holds a different rate limit type");
                 } else {
                     return RespValue::error("WRONGTYPE Key is not a rate limit counter");
                 }
@@ -385,9 +383,7 @@ pub fn cmd_ratelimit_acquire(ctx: &mut CommandContext) -> RespValue {
                 } else if b.is_empty() {
                     new_token_bucket(rate, capacity)
                 } else if is_ratelimit(b) {
-                    return RespValue::error(
-                        "WRONGTYPE Key holds a different rate limit type",
-                    );
+                    return RespValue::error("WRONGTYPE Key holds a different rate limit type");
                 } else {
                     return RespValue::error("WRONGTYPE Key is not a rate limit counter");
                 }

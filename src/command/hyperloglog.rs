@@ -1,7 +1,7 @@
-use bytes::Bytes;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
 
 /// HyperLogLog++ dense representation.
 /// Uses 16384 (2^14) registers, 6 bits each.
@@ -53,7 +53,7 @@ fn count_leading_zeros(hash: u64, skip_bits: usize) -> u8 {
     zeros.min((64 - skip_bits) as u8) + 1
 }
 
-fn hll_add(data: &mut Vec<u8>, element: &[u8]) -> bool {
+fn hll_add(data: &mut [u8], element: &[u8]) -> bool {
     let hash = hash_element(element);
     let index = (hash & ((1 << HLL_P) - 1)) as usize;
     let count = count_leading_zeros(hash, HLL_P);
@@ -93,7 +93,7 @@ fn hll_count(data: &[u8]) -> i64 {
     estimate.round() as i64
 }
 
-fn hll_merge(dest: &mut Vec<u8>, source: &[u8]) {
+fn hll_merge(dest: &mut [u8], source: &[u8]) {
     for i in 0..HLL_REGISTERS {
         let src_val = get_register(source, i);
         let dst_val = get_register(dest, i);
@@ -112,7 +112,9 @@ fn get_or_create_hll(ctx: &mut CommandContext, key: &Bytes) -> Result<Vec<u8>, R
             } else if b.is_empty() {
                 Ok(new_hll())
             } else {
-                Err(RespValue::error("WRONGTYPE Key is not a valid HyperLogLog string value."))
+                Err(RespValue::error(
+                    "WRONGTYPE Key is not a valid HyperLogLog string value.",
+                ))
             }
         }
         Some(_) => Err(RespValue::wrong_type()),
@@ -136,7 +138,8 @@ pub fn cmd_pfadd(ctx: &mut CommandContext) -> RespValue {
         }
     }
 
-    ctx.db().set_keep_ttl(key, RedisObject::String(Bytes::from(data)));
+    ctx.db()
+        .set_keep_ttl(key, RedisObject::String(Bytes::from(data)));
     RespValue::integer(if modified { 1 } else { 0 })
 }
 
@@ -169,7 +172,9 @@ pub fn cmd_pfcount(ctx: &mut CommandContext) -> RespValue {
                     if is_hll(b) {
                         hll_merge(&mut merged, b);
                     } else if !b.is_empty() {
-                        return RespValue::error("WRONGTYPE Key is not a valid HyperLogLog string value.");
+                        return RespValue::error(
+                            "WRONGTYPE Key is not a valid HyperLogLog string value.",
+                        );
                     }
                 }
                 Some(_) => return RespValue::wrong_type(),
@@ -196,7 +201,9 @@ pub fn cmd_pfmerge(ctx: &mut CommandContext) -> RespValue {
                 if is_hll(b) {
                     hll_merge(&mut merged, b);
                 } else if !b.is_empty() {
-                    return RespValue::error("WRONGTYPE Key is not a valid HyperLogLog string value.");
+                    return RespValue::error(
+                        "WRONGTYPE Key is not a valid HyperLogLog string value.",
+                    );
                 }
             }
             Some(_) => return RespValue::wrong_type(),
@@ -204,6 +211,7 @@ pub fn cmd_pfmerge(ctx: &mut CommandContext) -> RespValue {
         }
     }
 
-    ctx.db().set_keep_ttl(destkey, RedisObject::String(Bytes::from(merged)));
+    ctx.db()
+        .set_keep_ttl(destkey, RedisObject::String(Bytes::from(merged)));
     RespValue::ok()
 }
