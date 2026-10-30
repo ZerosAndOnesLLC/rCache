@@ -70,17 +70,17 @@ async fn handle_request(
     } else {
         match check_auth(&req, &state).await {
             Ok(u) => u,
-            Err(resp) => return Ok(resp),
+            Err(resp) => return Ok(*resp),
         }
     };
 
-    let result = match (method, path.as_str()) {
+    match (method, path.as_str()) {
         (Method::GET, "/health") => handle_health(&state),
         (Method::GET, "/info") => handle_info(&state).await,
         (Method::GET, "/metrics") => handle_metrics(&state).await,
         (Method::POST, "/api/v1/command") => match collect_limited(req).await {
             Ok(body) => handle_command(&state, &user, &body).await,
-            Err(resp) => Ok(resp),
+            Err(resp) => Ok(*resp),
         },
         (Method::GET, p) if p.starts_with("/api/v1/") => {
             let key = &p["/api/v1/".len()..];
@@ -90,7 +90,7 @@ async fn handle_request(
             let key = p["/api/v1/".len()..].to_string();
             match collect_limited(req).await {
                 Ok(body) => handle_put_key(&state, &user, &key, &body).await,
-                Err(resp) => Ok(resp),
+                Err(resp) => Ok(*resp),
             }
         }
         (Method::DELETE, p) if p.starts_with("/api/v1/") => {
@@ -98,9 +98,7 @@ async fn handle_request(
             handle_delete_key(&state, &user, key).await
         }
         _ => json_response(StatusCode::NOT_FOUND, &json!({"error": "not found"})),
-    };
-
-    result
+    }
 }
 
 /// 403 response for an authenticated user lacking permission for a command/key.
@@ -120,7 +118,7 @@ fn forbidden_response(msg: &str) -> Result<Response<Full<Bytes>>, BoxError> {
 async fn check_auth(
     req: &Request<Incoming>,
     state: &Arc<SharedState>,
-) -> Result<String, Response<Full<Bytes>>> {
+) -> Result<String, Box<Response<Full<Bytes>>>> {
     use crate::command::acl;
 
     let has_requirepass = state.config.requirepass.is_some();
@@ -140,13 +138,13 @@ async fn check_auth(
 
     let token = match token {
         Some(t) => t,
-        None => return Err(unauthorized_response()),
+        None => return Err(Box::new(unauthorized_response())),
     };
 
-    if let Some(ref req_pass) = state.config.requirepass {
-        if crate::command::acl::verify_secret(&token, req_pass) {
-            return Ok("default".to_string());
-        }
+    if let Some(ref req_pass) = state.config.requirepass
+        && crate::command::acl::verify_secret(&token, req_pass)
+    {
+        return Ok("default".to_string());
     }
 
     match acl::http_authenticate(&token) {
@@ -156,7 +154,7 @@ async fn check_auth(
             // HTTP path is stateless per request, so this is a per-attempt cost
             // rather than a per-connection backoff.
             tokio::time::sleep(std::time::Duration::from_millis(AUTH_FAIL_DELAY_MS)).await;
-            Err(unauthorized_response())
+            Err(Box::new(unauthorized_response()))
         }
     }
 }
@@ -168,12 +166,12 @@ const MAX_HTTP_BODY: usize = 64 * 1024 * 1024;
 const AUTH_FAIL_DELAY_MS: u64 = 250;
 
 /// Collect a request body, rejecting anything larger than `MAX_HTTP_BODY`.
-async fn collect_limited(req: Request<Incoming>) -> Result<Bytes, Response<Full<Bytes>>> {
+async fn collect_limited(req: Request<Incoming>) -> Result<Bytes, Box<Response<Full<Bytes>>>> {
     use http_body_util::Limited;
     let limited = Limited::new(req.into_body(), MAX_HTTP_BODY);
     match limited.collect().await {
         Ok(collected) => Ok(collected.to_bytes()),
-        Err(_) => Err(payload_too_large_response()),
+        Err(_) => Err(Box::new(payload_too_large_response())),
     }
 }
 

@@ -108,14 +108,14 @@ impl RedisObject {
                 items + 64
             }
             RedisObject::SortedSet(z) => {
-                let items: usize = z.members.iter().map(|(k, _)| k.len() + 56).sum();
+                let items: usize = z.members.keys().map(|k| k.len() + 56).sum();
                 items + 64
             }
             RedisObject::Stream(s) => {
                 let entries: usize = s
                     .entries
-                    .iter()
-                    .map(|(_, fields)| {
+                    .values()
+                    .map(|fields| {
                         let field_size: usize =
                             fields.iter().map(|(k, v)| k.len() + v.len() + 48).sum();
                         field_size + 32

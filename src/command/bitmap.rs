@@ -381,7 +381,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
                     None => {
-                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                        return RespValue::error(
+                            "ERR bit offset is not an integer or out of range",
+                        );
                     }
                 };
                 i += 3;
@@ -401,7 +403,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
                     None => {
-                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                        return RespValue::error(
+                            "ERR bit offset is not an integer or out of range",
+                        );
                     }
                 };
                 let value = match super::parse::int(&ctx.args[i + 3]) {
@@ -429,7 +433,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
                     None => {
-                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                        return RespValue::error(
+                            "ERR bit offset is not an integer or out of range",
+                        );
                     }
                 };
                 let increment = match super::parse::int(&ctx.args[i + 3]) {
@@ -501,7 +507,9 @@ pub fn cmd_bitfield_ro(ctx: &mut CommandContext) -> RespValue {
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
                     None => {
-                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                        return RespValue::error(
+                            "ERR bit offset is not an integer or out of range",
+                        );
                     }
                 };
                 i += 3;
@@ -580,7 +588,7 @@ fn read_bits(data: &[u8], offset: usize, bits: u32, signed: bool) -> i64 {
 
 fn write_bits(data: &mut Vec<u8>, offset: usize, bits: u32, value: i64) {
     let val = value as u64;
-    let needed_bytes = (offset + bits as usize + 7) / 8;
+    let needed_bytes = (offset + bits as usize).div_ceil(8);
     if needed_bytes > data.len() {
         data.resize(needed_bytes, 0);
     }

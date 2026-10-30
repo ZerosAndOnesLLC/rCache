@@ -575,10 +575,10 @@ mod tests {
 
     #[test]
     fn test_resp3_double() {
-        let buf = BytesMut::from(",3.14\r\n");
+        let buf = BytesMut::from(",2.5\r\n");
         let (val, consumed) = Parser::parse(&buf).unwrap();
-        assert_eq!(val, RespValue::Double(3.14));
-        assert_eq!(consumed, 7);
+        assert_eq!(val, RespValue::Double(2.5));
+        assert_eq!(consumed, 6);
     }
 
     #[test]
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn test_resp3_serialization_roundtrip() {
         let values = vec![
-            RespValue::Double(3.14),
+            RespValue::Double(2.5),
             RespValue::Double(f64::INFINITY),
             RespValue::Double(f64::NEG_INFINITY),
             RespValue::Boolean(true),

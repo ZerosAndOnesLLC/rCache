@@ -150,7 +150,7 @@ pub fn cmd_geoadd(ctx: &mut CommandContext) -> RespValue {
         }
     }
 
-    if (ctx.args.len() - i) % 3 != 0 {
+    if !(ctx.args.len() - i).is_multiple_of(3) {
         return RespValue::wrong_arity("geoadd");
     }
 

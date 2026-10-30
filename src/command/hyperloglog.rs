@@ -53,7 +53,7 @@ fn count_leading_zeros(hash: u64, skip_bits: usize) -> u8 {
     zeros.min((64 - skip_bits) as u8) + 1
 }
 
-fn hll_add(data: &mut Vec<u8>, element: &[u8]) -> bool {
+fn hll_add(data: &mut [u8], element: &[u8]) -> bool {
     let hash = hash_element(element);
     let index = (hash & ((1 << HLL_P) - 1)) as usize;
     let count = count_leading_zeros(hash, HLL_P);
@@ -93,7 +93,7 @@ fn hll_count(data: &[u8]) -> i64 {
     estimate.round() as i64
 }
 
-fn hll_merge(dest: &mut Vec<u8>, source: &[u8]) {
+fn hll_merge(dest: &mut [u8], source: &[u8]) {
     for i in 0..HLL_REGISTERS {
         let src_val = get_register(source, i);
         let dst_val = get_register(dest, i);

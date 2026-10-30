@@ -242,7 +242,7 @@ pub fn cmd_mget(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_mset(ctx: &mut CommandContext) -> RespValue {
-    if (ctx.args.len() - 1) % 2 != 0 {
+    if !(ctx.args.len() - 1).is_multiple_of(2) {
         return RespValue::wrong_arity("mset");
     }
     // Iterate args directly — no intermediate Vec. ctx.args[i] clones are
@@ -260,7 +260,7 @@ pub fn cmd_mset(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_msetnx(ctx: &mut CommandContext) -> RespValue {
-    if (ctx.args.len() - 1) % 2 != 0 {
+    if !(ctx.args.len() - 1).is_multiple_of(2) {
         return RespValue::wrong_arity("msetnx");
     }
     // Existence check pass — clone Bytes (refcount-cheap) before db borrow.
@@ -455,7 +455,9 @@ pub fn cmd_setrange(ctx: &mut CommandContext) -> RespValue {
     let needed = match offset.checked_add(value.len()) {
         Some(n) if n <= MAX_STRING_BYTES => n,
         _ => {
-            return RespValue::error("ERR string exceeds maximum allowed size (proto-max-bulk-len)");
+            return RespValue::error(
+                "ERR string exceeds maximum allowed size (proto-max-bulk-len)",
+            );
         }
     };
 

@@ -45,10 +45,10 @@ fn ensure_zset<'a>(
 
 fn cleanup_empty_zset(ctx: &mut CommandContext, key: &Bytes) {
     let db = ctx.db();
-    if let Some(RedisObject::SortedSet(z)) = db.get(key) {
-        if z.is_empty() {
-            db.remove(key);
-        }
+    if let Some(RedisObject::SortedSet(z)) = db.get(key)
+        && z.is_empty()
+    {
+        db.remove(key);
     }
 }
 
@@ -113,7 +113,7 @@ pub fn cmd_zadd(ctx: &mut CommandContext) -> RespValue {
         return RespValue::error("ERR XX and NX options at the same time are not compatible");
     }
 
-    if (ctx.args.len() - i) % 2 != 0 {
+    if !(ctx.args.len() - i).is_multiple_of(2) {
         return RespValue::wrong_arity("zadd");
     }
 
@@ -724,10 +724,10 @@ fn zstore_op(ctx: &mut CommandContext, op: SetOp) -> RespValue {
         let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
         match opt.as_str() {
             "WEIGHTS" => {
-                for j in 0..numkeys {
+                for weight in weights.iter_mut().take(numkeys) {
                     i += 1;
                     if i < ctx.args.len() {
-                        weights[j] = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
+                        *weight = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
                     }
                 }
             }
@@ -1006,10 +1006,10 @@ fn zset_op(ctx: &mut CommandContext, op: SetOp, _store: bool) -> RespValue {
         let opt = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
         match opt.as_str() {
             "WEIGHTS" => {
-                for j in 0..numkeys {
+                for weight in weights.iter_mut().take(numkeys) {
                     i += 1;
                     if i < ctx.args.len() {
-                        weights[j] = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
+                        *weight = String::from_utf8_lossy(&ctx.args[i]).parse().unwrap_or(1.0);
                     }
                 }
             }
@@ -1130,7 +1130,7 @@ pub fn cmd_zintercard(ctx: &mut CommandContext) -> RespValue {
 
     let first = &sets[0];
     let mut count = 0usize;
-    for (member, _) in &first.members {
+    for member in first.members.keys() {
         let in_all = sets[1..].iter().all(|s| s.score(member).is_some());
         if in_all {
             count += 1;
@@ -1424,13 +1424,10 @@ pub fn cmd_zremrangebylex(ctx: &mut CommandContext) -> RespValue {
                 .map(|(m, _)| m)
                 .collect();
             let count = to_remove.len() as i64;
-            match get_zset_mut(ctx, &key) {
-                Ok(Some(zset)) => {
-                    for m in &to_remove {
-                        zset.remove(m);
-                    }
+            if let Ok(Some(zset)) = get_zset_mut(ctx, &key) {
+                for m in &to_remove {
+                    zset.remove(m);
                 }
-                _ => {}
             }
             cleanup_empty_zset(ctx, &key);
             RespValue::integer(count)
@@ -1456,13 +1453,10 @@ pub fn cmd_zremrangebyrank(ctx: &mut CommandContext) -> RespValue {
             let items = zset.range_by_index(start, stop);
             let to_remove: Vec<Bytes> = items.into_iter().map(|(m, _)| m).collect();
             let count = to_remove.len() as i64;
-            match get_zset_mut(ctx, &key) {
-                Ok(Some(zset)) => {
-                    for m in &to_remove {
-                        zset.remove(m);
-                    }
+            if let Ok(Some(zset)) = get_zset_mut(ctx, &key) {
+                for m in &to_remove {
+                    zset.remove(m);
                 }
-                _ => {}
             }
             cleanup_empty_zset(ctx, &key);
             RespValue::integer(count)
@@ -1491,13 +1485,10 @@ pub fn cmd_zremrangebyscore(ctx: &mut CommandContext) -> RespValue {
             let items = zset.range_by_score_bounded(min, min_incl, max, max_incl);
             let to_remove: Vec<Bytes> = items.into_iter().map(|(m, _)| m).collect();
             let count = to_remove.len() as i64;
-            match get_zset_mut(ctx, &key) {
-                Ok(Some(zset)) => {
-                    for m in &to_remove {
-                        zset.remove(m);
-                    }
+            if let Ok(Some(zset)) = get_zset_mut(ctx, &key) {
+                for m in &to_remove {
+                    zset.remove(m);
                 }
-                _ => {}
             }
             cleanup_empty_zset(ctx, &key);
             RespValue::integer(count)

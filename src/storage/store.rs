@@ -280,10 +280,10 @@ impl Store {
                     .enumerate()
                     .max_by_key(|(_, (_, c, _))| *c)
                     .map(|(i, _)| i);
-                if let Some(idx) = best_idx {
-                    if entry.1 < self.lfu_eviction_pool[idx].1 {
-                        self.lfu_eviction_pool[idx] = entry;
-                    }
+                if let Some(idx) = best_idx
+                    && entry.1 < self.lfu_eviction_pool[idx].1
+                {
+                    self.lfu_eviction_pool[idx] = entry;
                 }
             }
         }

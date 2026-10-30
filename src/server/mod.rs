@@ -302,7 +302,7 @@ impl Server {
 
         let aof_writer = if self.config.aof_enabled {
             let path = std::path::Path::new(&self.config.aof_filename);
-            let fsync = FsyncMode::from_str(&self.config.appendfsync);
+            let fsync = FsyncMode::from(self.config.appendfsync.as_str());
             match AofWriter::open(path, fsync) {
                 Ok(writer) => {
                     tracing::info!("AOF enabled: {}", self.config.aof_filename);
@@ -435,7 +435,7 @@ impl Server {
                                     addr,
                                     client_id
                                 );
-                                let stream = connection::MaybeTls::Tls(tls_stream);
+                                let stream = connection::MaybeTls::Tls(Box::new(tls_stream));
                                 let mut conn = connection::Connection::new(
                                     stream,
                                     state.clone(),

@@ -173,23 +173,23 @@ fn rewrite_aof_from_store(
                 }
             }
 
-            if let Some(expire_at) = expires.get(key) {
-                if *expire_at > now {
-                    let remaining = *expire_at - now;
-                    let now_ms = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64;
-                    let expire_ms = now_ms + remaining.as_millis() as u64;
-                    write_cmd(
-                        &mut writer,
-                        &[
-                            Bytes::from("PEXPIREAT"),
-                            key.clone(),
-                            Bytes::from(expire_ms.to_string()),
-                        ],
-                    )?;
-                }
+            if let Some(expire_at) = expires.get(key)
+                && *expire_at > now
+            {
+                let remaining = *expire_at - now;
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                let expire_ms = now_ms + remaining.as_millis() as u64;
+                write_cmd(
+                    &mut writer,
+                    &[
+                        Bytes::from("PEXPIREAT"),
+                        key.clone(),
+                        Bytes::from(expire_ms.to_string()),
+                    ],
+                )?;
             }
         }
     }

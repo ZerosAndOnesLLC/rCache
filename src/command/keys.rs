@@ -6,8 +6,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub fn cmd_del(ctx: &mut CommandContext) -> RespValue {
     let mut count = 0i64;
-    for key in ctx.args[1..].to_vec() {
-        if ctx.db().remove(&key).is_some() {
+    let db = ctx.store.db_mut(ctx.db_index);
+    for key in &ctx.args[1..] {
+        if db.remove(key).is_some() {
             count += 1;
         }
     }
@@ -64,19 +65,17 @@ fn apply_expire(
     if xx && current_expire.is_none() {
         return RespValue::integer(0);
     }
-    if gt {
-        if let Some(cur) = current_expire {
-            if new_expire <= cur {
-                return RespValue::integer(0);
-            }
-        }
+    if gt
+        && let Some(cur) = current_expire
+        && new_expire <= cur
+    {
+        return RespValue::integer(0);
     }
-    if lt {
-        if let Some(cur) = current_expire {
-            if new_expire >= cur {
-                return RespValue::integer(0);
-            }
-        }
+    if lt
+        && let Some(cur) = current_expire
+        && new_expire >= cur
+    {
+        return RespValue::integer(0);
     }
 
     db.set_expire(key, new_expire);

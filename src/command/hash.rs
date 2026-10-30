@@ -23,17 +23,17 @@ fn ensure_hash<'a>(
 
 fn cleanup_empty_hash(ctx: &mut CommandContext, key: &Bytes) {
     let db = ctx.db();
-    if let Some(RedisObject::Hash(h)) = db.get(key) {
-        if h.is_empty() {
-            db.remove(key);
-        }
+    if let Some(RedisObject::Hash(h)) = db.get(key)
+        && h.is_empty()
+    {
+        db.remove(key);
     }
 }
 
 pub fn cmd_hset(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
     let pairs: Vec<Bytes> = ctx.args[2..].to_vec();
-    if pairs.len() % 2 != 0 {
+    if !pairs.len().is_multiple_of(2) {
         return RespValue::wrong_arity("hset");
     }
 
@@ -64,11 +64,11 @@ pub fn cmd_hsetnx(ctx: &mut CommandContext) -> RespValue {
         Err(e) => return e,
     };
 
-    if hash.contains_key(&field) {
-        RespValue::integer(0)
-    } else {
-        hash.insert(field, value);
+    if let std::collections::hash_map::Entry::Vacant(e) = hash.entry(field) {
+        e.insert(value);
         RespValue::integer(1)
+    } else {
+        RespValue::integer(0)
     }
 }
 

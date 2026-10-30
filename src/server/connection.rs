@@ -29,7 +29,7 @@ const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 /// A stream that may or may not be TLS-wrapped.
 pub enum MaybeTls {
     Plain(TcpStream),
-    Tls(tokio_rustls::server::TlsStream<TcpStream>),
+    Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
 }
 
 impl AsyncRead for MaybeTls {
@@ -260,7 +260,7 @@ impl Connection {
                 let cmd_name = match &value {
                     RespValue::Array(items) if !items.is_empty() => match &items[0] {
                         RespValue::BulkString(b) => String::from_utf8_lossy(b).to_uppercase(),
-                        other => other.to_string_lossy().to_uppercase().into(),
+                        other => other.to_string_lossy().to_uppercase(),
                     },
                     _ => "UNKNOWN".into(),
                 };
@@ -479,13 +479,14 @@ impl Connection {
         }
 
         // In pub/sub mode, only SUBSCRIBE/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE/PING/RESET/QUIT are allowed
-        if !self.subscribed_channels.is_empty() || !self.subscribed_patterns.is_empty() {
-            if cmd_name != "PING" && cmd_name != "RESET" {
-                return RespValue::error(format!(
-                    "ERR Can't execute '{}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context",
-                    cmd_name.to_lowercase()
-                ));
-            }
+        if (!self.subscribed_channels.is_empty() || !self.subscribed_patterns.is_empty())
+            && cmd_name != "PING"
+            && cmd_name != "RESET"
+        {
+            return RespValue::error(format!(
+                "ERR Can't execute '{}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context",
+                cmd_name.to_lowercase()
+            ));
         }
 
         // Transaction commands
@@ -691,10 +692,10 @@ impl Connection {
         if is_write {
             if !matches!(result, RespValue::Error(_)) {
                 let mut aof = self.state.aof_writer.lock().await;
-                if let Some(writer) = aof.as_mut() {
-                    if let Err(e) = writer.append(&args_for_aof) {
-                        tracing::error!("AOF write error: {}", e);
-                    }
+                if let Some(writer) = aof.as_mut()
+                    && let Err(e) = writer.append(&args_for_aof)
+                {
+                    tracing::error!("AOF write error: {}", e);
                 }
             }
 
@@ -935,10 +936,10 @@ impl Connection {
         self.authenticated = true;
         self.auth_username = username;
         // Clear this IP's accumulated failures on a successful auth.
-        if let Some(ip) = self.peer_ip {
-            if let Ok(mut map) = self.state.auth_failures.try_lock() {
-                map.remove(&ip);
-            }
+        if let Some(ip) = self.peer_ip
+            && let Ok(mut map) = self.state.auth_failures.try_lock()
+        {
+            map.remove(&ip);
         }
     }
 
@@ -988,13 +989,12 @@ impl Connection {
         let username = String::from_utf8_lossy(username).to_string();
         let password = String::from_utf8_lossy(password).to_string();
 
-        if username == "default" {
-            if let Some(ref req_pass) = self.state.config.requirepass {
-                if crate::command::acl::verify_secret(&password, req_pass) {
-                    self.auth_success(username);
-                    return None;
-                }
-            }
+        if username == "default"
+            && let Some(ref req_pass) = self.state.config.requirepass
+            && crate::command::acl::verify_secret(&password, req_pass)
+        {
+            self.auth_success(username);
+            return None;
         }
 
         match crate::command::acl::check_password(&username, &password) {
@@ -1336,10 +1336,10 @@ fn compute_key_version(db: &mut crate::storage::Database, key: &Bytes) -> Option
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    if let Some(v) = db.key_version(key) {
-        if v != 0 {
-            return Some(v);
-        }
+    if let Some(v) = db.key_version(key)
+        && v != 0
+    {
+        return Some(v);
     }
 
     let obj = db.get(key)?;

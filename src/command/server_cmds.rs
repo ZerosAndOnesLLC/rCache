@@ -366,10 +366,10 @@ pub fn cmd_debug(ctx: &mut CommandContext) -> RespValue {
     let subcmd = String::from_utf8_lossy(&ctx.args[1]).to_uppercase();
     match subcmd.as_str() {
         "SLEEP" => {
-            if ctx.args.len() >= 3 {
-                if let Ok(secs) = String::from_utf8_lossy(&ctx.args[2]).parse::<f64>() {
-                    std::thread::sleep(std::time::Duration::from_secs_f64(secs));
-                }
+            if ctx.args.len() >= 3
+                && let Ok(secs) = String::from_utf8_lossy(&ctx.args[2]).parse::<f64>()
+            {
+                std::thread::sleep(std::time::Duration::from_secs_f64(secs));
             }
             RespValue::ok()
         }

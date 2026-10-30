@@ -184,10 +184,10 @@ pub fn cmd_rpop(ctx: &mut CommandContext) -> RespValue {
 
 fn cleanup_empty_list(ctx: &mut CommandContext, key: &Bytes) {
     let db = ctx.db();
-    if let Some(RedisObject::List(list)) = db.get(key) {
-        if list.is_empty() {
-            db.remove(key);
-        }
+    if let Some(RedisObject::List(list)) = db.get(key)
+        && list.is_empty()
+    {
+        db.remove(key);
     }
 }
 
@@ -618,15 +618,15 @@ pub fn cmd_blpop(ctx: &mut CommandContext) -> RespValue {
 
     for key in &keys {
         let db = ctx.db();
-        if let Some(RedisObject::List(list)) = db.get_mut(key) {
-            if let Some(val) = list.pop_front() {
-                let key_clone = key.clone();
-                cleanup_empty_list(ctx, &key_clone);
-                return RespValue::array(vec![
-                    RespValue::bulk_string(key_clone),
-                    RespValue::bulk_string(val),
-                ]);
-            }
+        if let Some(RedisObject::List(list)) = db.get_mut(key)
+            && let Some(val) = list.pop_front()
+        {
+            let key_clone = key.clone();
+            cleanup_empty_list(ctx, &key_clone);
+            return RespValue::array(vec![
+                RespValue::bulk_string(key_clone),
+                RespValue::bulk_string(val),
+            ]);
         }
     }
 
@@ -639,15 +639,15 @@ pub fn cmd_brpop(ctx: &mut CommandContext) -> RespValue {
 
     for key in &keys {
         let db = ctx.db();
-        if let Some(RedisObject::List(list)) = db.get_mut(key) {
-            if let Some(val) = list.pop_back() {
-                let key_clone = key.clone();
-                cleanup_empty_list(ctx, &key_clone);
-                return RespValue::array(vec![
-                    RespValue::bulk_string(key_clone),
-                    RespValue::bulk_string(val),
-                ]);
-            }
+        if let Some(RedisObject::List(list)) = db.get_mut(key)
+            && let Some(val) = list.pop_back()
+        {
+            let key_clone = key.clone();
+            cleanup_empty_list(ctx, &key_clone);
+            return RespValue::array(vec![
+                RespValue::bulk_string(key_clone),
+                RespValue::bulk_string(val),
+            ]);
         }
     }
 

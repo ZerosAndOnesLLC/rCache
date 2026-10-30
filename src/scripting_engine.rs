@@ -51,6 +51,12 @@ impl ScriptCache {
     }
 }
 
+impl Default for ScriptCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Function library for Redis Functions support.
 pub struct FunctionLibrary {
     /// library_name -> FunctionLib
@@ -161,6 +167,12 @@ impl FunctionLibrary {
     pub fn flush(&self) {
         let mut libs = self.libraries.lock().unwrap_or_else(|e| e.into_inner());
         libs.clear();
+    }
+}
+
+impl Default for FunctionLibrary {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -291,7 +303,7 @@ pub fn execute_script(
                 }
 
                 let mut store_ref = store_cell.borrow_mut();
-                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args, readonly);
+                let resp = execute_redis_command(&mut store_ref, db_idx, &str_args, readonly);
                 resp_to_lua(lua_ctx, &resp)
             })?;
 
@@ -322,7 +334,7 @@ pub fn execute_script(
                 }
 
                 let mut store_ref = store_cell.borrow_mut();
-                let resp = execute_redis_command(&mut **store_ref, db_idx, &str_args, readonly);
+                let resp = execute_redis_command(&mut store_ref, db_idx, &str_args, readonly);
                 match &resp {
                     RespValue::Error(e) => {
                         let err_table = lua_ctx.create_table()?;
@@ -453,7 +465,7 @@ fn execute_redis_command(
 }
 
 /// Convert a RespValue to a Lua value.
-fn resp_to_lua<'a>(lua: &'a mlua::Lua, resp: &RespValue) -> mlua::Result<mlua::Value> {
+fn resp_to_lua(lua: &mlua::Lua, resp: &RespValue) -> mlua::Result<mlua::Value> {
     match resp {
         RespValue::SimpleString(s) => {
             let t = lua.create_table()?;
@@ -611,10 +623,7 @@ mod tests {
             0,
             false,
         );
-        // pcall should catch the error
-        match result {
-            RespValue::BulkString(_) => {} // Got the error string back
-            _ => {}                        // Any non-panic result is fine
-        }
+        // pcall should catch the error; any non-panic result is fine.
+        let _ = result;
     }
 }

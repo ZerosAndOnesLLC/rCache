@@ -162,7 +162,7 @@ fn set_tb_last_refill(data: &mut [u8], ms: u64) {
     data[29..37].copy_from_slice(&ms.to_le_bytes());
 }
 
-fn tb_refill(data: &mut Vec<u8>) {
+fn tb_refill(data: &mut [u8]) {
     let now = now_ms();
     let last = tb_last_refill(data);
     let elapsed_ms = now.saturating_sub(last);
@@ -177,7 +177,7 @@ fn tb_refill(data: &mut Vec<u8>) {
 }
 
 fn is_ratelimit(data: &[u8]) -> bool {
-    data.len() >= RL_HEADER_LEN + 1 && &data[0..RL_HEADER_LEN] == RL_HEADER
+    data.len() > RL_HEADER_LEN && &data[0..RL_HEADER_LEN] == RL_HEADER
 }
 
 // ============================================================================

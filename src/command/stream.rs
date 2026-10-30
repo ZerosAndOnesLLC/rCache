@@ -270,7 +270,7 @@ pub fn cmd_xadd(ctx: &mut CommandContext) -> RespValue {
                 idx += 1;
             }
             "MAXLEN" | "MINID" => {
-                let args_clone: Vec<Bytes> = ctx.args.iter().cloned().collect();
+                let args_clone: Vec<Bytes> = ctx.args.to_vec();
                 match parse_trim_args(&args_clone, idx) {
                     Ok(Some(tc)) => {
                         trim_config = Some(tc);
@@ -308,7 +308,7 @@ pub fn cmd_xadd(ctx: &mut CommandContext) -> RespValue {
 
     // Remaining args are field-value pairs
     let remaining = ctx.args.len() - idx;
-    if remaining == 0 || remaining % 2 != 0 {
+    if remaining == 0 || !remaining.is_multiple_of(2) {
         return RespValue::error("ERR wrong number of arguments for 'xadd' command");
     }
 
@@ -323,10 +323,10 @@ pub fn cmd_xadd(ctx: &mut CommandContext) -> RespValue {
     let db = ctx.db();
 
     // Check if key exists and is wrong type
-    if let Some(obj) = db.get(&key) {
-        if !matches!(obj, RedisObject::Stream(_)) {
-            return RespValue::wrong_type();
-        }
+    if let Some(obj) = db.get(&key)
+        && !matches!(obj, RedisObject::Stream(_))
+    {
+        return RespValue::wrong_type();
     }
 
     // Check NOMKSTREAM: if key doesn't exist, return Null
@@ -455,10 +455,10 @@ pub fn cmd_xrange(ctx: &mut CommandContext) -> RespValue {
             let mut results: Vec<RespValue> = Vec::new();
             for (id, fields) in s.entries.range(&start..=&end) {
                 results.push(format_entry(id, fields));
-                if let Some(c) = count {
-                    if results.len() >= c {
-                        break;
-                    }
+                if let Some(c) = count
+                    && results.len() >= c
+                {
+                    break;
                 }
             }
             RespValue::array(results)
@@ -505,10 +505,10 @@ pub fn cmd_xrevrange(ctx: &mut CommandContext) -> RespValue {
             let mut results: Vec<RespValue> = Vec::new();
             for (id, fields) in s.entries.range(&start..=&end).rev() {
                 results.push(format_entry(id, fields));
-                if let Some(c) = count {
-                    if results.len() >= c {
-                        break;
-                    }
+                if let Some(c) = count
+                    && results.len() >= c
+                {
+                    break;
                 }
             }
             RespValue::array(results)
@@ -559,7 +559,7 @@ pub fn cmd_xtrim(ctx: &mut CommandContext) -> RespValue {
     }
 
     let key = ctx.args[1].clone();
-    let args_clone: Vec<Bytes> = ctx.args.iter().cloned().collect();
+    let args_clone: Vec<Bytes> = ctx.args.to_vec();
     let trim = match parse_trim_args(&args_clone, 2) {
         Ok(Some(tc)) => tc,
         Ok(None) => return RespValue::error("ERR syntax error"),
@@ -622,7 +622,7 @@ pub fn cmd_xread(ctx: &mut CommandContext) -> RespValue {
 
     // Remaining args: keys then IDs
     let remaining = ctx.args.len() - idx;
-    if remaining == 0 || remaining % 2 != 0 {
+    if remaining == 0 || !remaining.is_multiple_of(2) {
         return RespValue::error(
             "ERR Unbalanced 'xread' list of streams: for each stream key an ID or '$' must be specified.",
         );
@@ -670,10 +670,10 @@ pub fn cmd_xread(ctx: &mut CommandContext) -> RespValue {
                 let mut entries: Vec<RespValue> = Vec::new();
                 for (id, fields) in s.entries.range(&next..) {
                     entries.push(format_entry(id, fields));
-                    if let Some(c) = count {
-                        if entries.len() >= c {
-                            break;
-                        }
+                    if let Some(c) = count
+                        && entries.len() >= c
+                    {
+                        break;
                     }
                 }
 
@@ -1000,17 +1000,14 @@ fn cmd_xgroup_createconsumer(ctx: &mut CommandContext) -> RespValue {
         None => return RespValue::error("NOGROUP No such consumer group for key name"),
     };
 
-    if group.consumers.contains_key(&consumer_name) {
-        RespValue::integer(0)
-    } else {
-        group.consumers.insert(
-            consumer_name,
-            ConsumerData {
-                pel: HashSet::new(),
-                seen_time: current_time_ms(),
-            },
-        );
+    if let std::collections::hash_map::Entry::Vacant(e) = group.consumers.entry(consumer_name) {
+        e.insert(ConsumerData {
+            pel: HashSet::new(),
+            seen_time: current_time_ms(),
+        });
         RespValue::integer(1)
+    } else {
+        RespValue::integer(0)
     }
 }
 
@@ -1111,7 +1108,7 @@ pub fn cmd_xreadgroup(ctx: &mut CommandContext) -> RespValue {
     }
 
     let remaining = ctx.args.len() - idx;
-    if remaining == 0 || remaining % 2 != 0 {
+    if remaining == 0 || !remaining.is_multiple_of(2) {
         return RespValue::error(
             "ERR Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified.",
         );
@@ -1135,7 +1132,9 @@ pub fn cmd_xreadgroup(ctx: &mut CommandContext) -> RespValue {
             Some(RedisObject::Stream(s)) => s,
             Some(_) => return RespValue::wrong_type(),
             None => {
-                return RespValue::error("ERR The XREADGROUP subcommand requires the key to exist.");
+                return RespValue::error(
+                    "ERR The XREADGROUP subcommand requires the key to exist.",
+                );
             }
         };
 
@@ -1199,10 +1198,10 @@ pub fn cmd_xreadgroup(ctx: &mut CommandContext) -> RespValue {
                     }
                 }
 
-                if let Some(c) = count {
-                    if entries.len() >= c {
-                        break;
-                    }
+                if let Some(c) = count
+                    && entries.len() >= c
+                {
+                    break;
                 }
             }
 
@@ -1243,10 +1242,10 @@ pub fn cmd_xreadgroup(ctx: &mut CommandContext) -> RespValue {
                         pe.delivery_time = now;
                     }
                 }
-                if let Some(c) = count {
-                    if entries.len() >= c {
-                        break;
-                    }
+                if let Some(c) = count
+                    && entries.len() >= c
+                {
+                    break;
                 }
             }
 
@@ -1443,10 +1442,10 @@ pub fn cmd_xpending(ctx: &mut CommandContext) -> RespValue {
         let mut results: Vec<RespValue> = Vec::new();
 
         for (id, pe) in group.pel.range(&start..=&end) {
-            if let Some(ref cf) = consumer_filter {
-                if &pe.consumer != cf {
-                    continue;
-                }
+            if let Some(ref cf) = consumer_filter
+                && pe.consumer != cf
+            {
+                continue;
             }
 
             if let Some(min_idle_val) = min_idle {
@@ -1666,10 +1665,10 @@ pub fn cmd_xautoclaim(ctx: &mut CommandContext) -> RespValue {
             }
         } else {
             // Entry was deleted, remove from PEL
-            if let Some(pe) = group.pel.remove(id) {
-                if let Some(c) = group.consumers.get_mut(&pe.consumer) {
-                    c.pel.remove(id);
-                }
+            if let Some(pe) = group.pel.remove(id)
+                && let Some(c) = group.consumers.get_mut(&pe.consumer)
+            {
+                c.pel.remove(id);
             }
             deleted_ids.push(RespValue::bulk_string(Bytes::from(id.to_string())));
         }

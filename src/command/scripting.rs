@@ -66,7 +66,7 @@ pub fn cmd_evalsha(ctx: &mut CommandContext) -> RespValue {
                 readonly,
             )
         }
-        None => RespValue::error(format!("NOSCRIPT No matching script. Please use EVAL.")),
+        None => RespValue::error("NOSCRIPT No matching script. Please use EVAL.".to_string()),
     }
 }
 
@@ -312,7 +312,7 @@ pub fn cmd_fcall(ctx: &mut CommandContext) -> RespValue {
                 readonly,
             )
         }
-        None => RespValue::error(format!("ERR Function not found")),
+        None => RespValue::error("ERR Function not found".to_string()),
     }
 }
 

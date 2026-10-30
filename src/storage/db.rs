@@ -454,12 +454,11 @@ impl Database {
                 }
             }
 
-            if let Some(tf) = type_filter {
-                if let Some(obj) = self.data.get(key) {
-                    if obj.type_name() != tf {
-                        continue;
-                    }
-                }
+            if let Some(tf) = type_filter
+                && let Some(obj) = self.data.get(key)
+                && obj.type_name() != tf
+            {
+                continue;
             }
 
             result.push(key.clone());
@@ -491,19 +490,19 @@ impl Database {
             .or_insert_with(LfuCounter::new);
 
         // Decay: reduce counter based on elapsed time
-        if lfu_decay_time > 0 {
-            let elapsed = if now_minutes >= entry.decr_time {
-                (now_minutes - entry.decr_time) as u64
-            } else {
-                // Handle u16 wrap-around
-                (now_minutes as u64) + (u16::MAX as u64) - (entry.decr_time as u64) + 1
-            };
-            let num_periods = elapsed / lfu_decay_time;
-            if num_periods > 0 {
-                let decrement = num_periods.min(entry.counter as u64);
-                entry.counter = entry.counter.saturating_sub(decrement as u8);
-                entry.decr_time = now_minutes;
-            }
+        let elapsed = if now_minutes >= entry.decr_time {
+            (now_minutes - entry.decr_time) as u64
+        } else {
+            // Handle u16 wrap-around
+            (now_minutes as u64) + (u16::MAX as u64) - (entry.decr_time as u64) + 1
+        };
+        // A decay time of 0 disables decay (checked_div yields None).
+        if let Some(num_periods) = elapsed.checked_div(lfu_decay_time)
+            && num_periods > 0
+        {
+            let decrement = num_periods.min(entry.counter as u64);
+            entry.counter = entry.counter.saturating_sub(decrement as u8);
+            entry.decr_time = now_minutes;
         }
 
         // Probabilistic increment: probability = 1 / (counter * lfu_log_factor + 1)

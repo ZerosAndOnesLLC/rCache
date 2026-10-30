@@ -68,7 +68,7 @@ fn optimal_bits(capacity: u32, error_rate: f64) -> u32 {
 fn new_bloom(error_rate: f64, capacity: u32) -> Vec<u8> {
     let k = optimal_k(error_rate);
     let num_bits = optimal_bits(capacity, error_rate).max(8);
-    let byte_count = (num_bits as usize + 7) / 8;
+    let byte_count = (num_bits as usize).div_ceil(8);
 
     let mut data = Vec::with_capacity(BLOOM_META_LEN + byte_count);
     data.extend_from_slice(BLOOM_HEADER);
@@ -127,7 +127,7 @@ fn bloom_set_bit(data: &mut [u8], index: usize) {
     }
 }
 
-fn bloom_add(data: &mut Vec<u8>, item: &[u8]) -> bool {
+fn bloom_add(data: &mut [u8], item: &[u8]) -> bool {
     let num_bits = bloom_num_bits(data) as usize;
     let k = bloom_k(data) as usize;
     let indices = get_hash_indices(item, num_bits, k);
@@ -299,7 +299,7 @@ pub fn cmd_bf_reserve(ctx: &mut CommandContext) -> RespValue {
 
     // Reject dimensions that would allocate more than the per-structure cap.
     let num_bits = optimal_bits(capacity, error_rate).max(8);
-    let byte_count = (num_bits as usize + 7) / 8;
+    let byte_count = (num_bits as usize).div_ceil(8);
     if byte_count > MAX_PROB_BYTES {
         return RespValue::error("ERR Bloom filter dimensions too large");
     }
@@ -423,7 +423,7 @@ fn cms_hash(item: &[u8], seed: u32) -> u64 {
     hash
 }
 
-fn cms_increment(data: &mut Vec<u8>, item: &[u8], increment: u64) {
+fn cms_increment(data: &mut [u8], item: &[u8], increment: u64) {
     let width = cms_width(data) as usize;
     let depth = cms_depth(data) as usize;
 
@@ -549,7 +549,7 @@ pub fn cmd_cms_incrby(ctx: &mut CommandContext) -> RespValue {
 
     // Must have pairs of item+increment after key
     let pairs: Vec<Bytes> = ctx.args[2..].to_vec();
-    if pairs.len() % 2 != 0 {
+    if !pairs.len().is_multiple_of(2) {
         return RespValue::error("ERR wrong number of arguments for 'cms.incrby' command");
     }
 
@@ -982,7 +982,7 @@ impl TopKState {
 
     fn list(&self) -> Vec<(String, u64)> {
         let mut items = self.heap.clone();
-        items.sort_by(|a, b| b.1.cmp(&a.1));
+        items.sort_by_key(|item| std::cmp::Reverse(item.1));
         items
     }
 }

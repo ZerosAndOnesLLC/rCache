@@ -423,7 +423,7 @@ fn cmd_acl_genpass(ctx: &mut CommandContext) -> RespValue {
         256
     };
 
-    let bytes_needed = (bits + 7) / 8;
+    let bytes_needed = bits.div_ceil(8);
     use rand::Rng;
     let mut rng = rand::thread_rng();
     let random_bytes: Vec<u8> = (0..bytes_needed).map(|_| rng.r#gen()).collect();
@@ -506,15 +506,15 @@ pub enum AuthOutcome {
 /// enforcement path (which reads this same registry) requires it. This makes the
 /// ACL registry the single source of truth for authentication and authorization.
 pub fn init_default_password(requirepass: Option<&str>) {
-    if let (Some(pass), Ok(mut users)) = (requirepass, ACL_USERS.lock()) {
-        if let Some(def) = users.get_mut("default") {
-            use sha2::{Digest, Sha256};
-            let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
-            if !def.passwords.contains(&hash) {
-                def.passwords.push(hash);
-            }
-            def.no_pass = false;
+    if let (Some(pass), Ok(mut users)) = (requirepass, ACL_USERS.lock())
+        && let Some(def) = users.get_mut("default")
+    {
+        use sha2::{Digest, Sha256};
+        let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
+        if !def.passwords.contains(&hash) {
+            def.passwords.push(hash);
         }
+        def.no_pass = false;
     }
 }
 

@@ -13,8 +13,8 @@ fn json_get<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
         return Some(root);
     }
 
-    let normalized = if path.starts_with('$') {
-        &path[1..]
+    let normalized = if let Some(rest) = path.strip_prefix('$') {
+        rest
     } else if path.starts_with('.') {
         path
     } else {
@@ -31,9 +31,7 @@ fn json_get<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
                 break;
             }
             // Read field name until next '.' or '['
-            let end = remaining
-                .find(|c: char| c == '.' || c == '[')
-                .unwrap_or(remaining.len());
+            let end = remaining.find(['.', '[']).unwrap_or(remaining.len());
             let field = &remaining[..end];
             if field.is_empty() {
                 return None;
@@ -61,8 +59,8 @@ fn json_get_mut<'a>(root: &'a mut Value, path: &str) -> Option<&'a mut Value> {
         return Some(root);
     }
 
-    let normalized = if path.starts_with('$') {
-        &path[1..]
+    let normalized = if let Some(rest) = path.strip_prefix('$') {
+        rest
     } else if path.starts_with('.') {
         path
     } else {
@@ -78,9 +76,7 @@ fn json_get_mut<'a>(root: &'a mut Value, path: &str) -> Option<&'a mut Value> {
             if remaining.is_empty() {
                 break;
             }
-            let end = remaining
-                .find(|c: char| c == '.' || c == '[')
-                .unwrap_or(remaining.len());
+            let end = remaining.find(['.', '[']).unwrap_or(remaining.len());
             let field = &remaining[..end];
             if field.is_empty() {
                 return None;
@@ -229,15 +225,15 @@ pub fn cmd_json_set(ctx: &mut CommandContext) -> RespValue {
     }
 
     // Path doesn't exist, try to create it by setting on parent
-    if let Some((parent_path, segment)) = split_parent_path(&path) {
-        if let Some(parent) = json_get_mut(obj, &parent_path) {
-            if segment.starts_with('[') {
-                return RespValue::error("ERR array index out of range");
-            }
-            if let Some(map) = parent.as_object_mut() {
-                map.insert(segment, new_value);
-                return RespValue::ok();
-            }
+    if let Some((parent_path, segment)) = split_parent_path(&path)
+        && let Some(parent) = json_get_mut(obj, &parent_path)
+    {
+        if segment.starts_with('[') {
+            return RespValue::error("ERR array index out of range");
+        }
+        if let Some(map) = parent.as_object_mut() {
+            map.insert(segment, new_value);
+            return RespValue::ok();
         }
     }
 
@@ -326,25 +322,24 @@ pub fn cmd_json_del(ctx: &mut CommandContext) -> RespValue {
     };
 
     // Delete at path
-    if let Some((parent_path, segment)) = split_parent_path(&path) {
-        if let Some(parent) = json_get_mut(obj, &parent_path) {
-            if segment.starts_with('[') {
-                // Array index removal
-                let close = segment.find(']').unwrap_or(segment.len());
-                let idx_str = &segment[1..close];
-                if let Ok(idx) = idx_str.parse::<usize>() {
-                    if let Some(arr) = parent.as_array_mut() {
-                        if idx < arr.len() {
-                            arr.remove(idx);
-                            return RespValue::integer(1);
-                        }
-                    }
-                }
-            } else if let Some(map) = parent.as_object_mut() {
-                if map.remove(&segment).is_some() {
-                    return RespValue::integer(1);
-                }
+    if let Some((parent_path, segment)) = split_parent_path(&path)
+        && let Some(parent) = json_get_mut(obj, &parent_path)
+    {
+        if segment.starts_with('[') {
+            // Array index removal
+            let close = segment.find(']').unwrap_or(segment.len());
+            let idx_str = &segment[1..close];
+            if let Ok(idx) = idx_str.parse::<usize>()
+                && let Some(arr) = parent.as_array_mut()
+                && idx < arr.len()
+            {
+                arr.remove(idx);
+                return RespValue::integer(1);
             }
+        } else if let Some(map) = parent.as_object_mut()
+            && map.remove(&segment).is_some()
+        {
+            return RespValue::integer(1);
         }
     }
 
@@ -590,12 +585,12 @@ pub fn cmd_json_arrpop(ctx: &mut CommandContext) -> RespValue {
             let idx = match index {
                 Some(i) => {
                     let len = arr.len() as i64;
-                    let resolved = if i < 0 {
+
+                    if i < 0 {
                         (len + i).max(0) as usize
                     } else {
                         i.min(len - 1) as usize
-                    };
-                    resolved
+                    }
                 }
                 None => arr.len() - 1, // pop last
             };

@@ -46,10 +46,10 @@ fn ensure_set<'a>(
 
 fn cleanup_empty_set(ctx: &mut CommandContext, key: &Bytes) {
     let db = ctx.db();
-    if let Some(RedisObject::Set(s)) = db.get(key) {
-        if s.is_empty() {
-            db.remove(key);
-        }
+    if let Some(RedisObject::Set(s)) = db.get(key)
+        && s.is_empty()
+    {
+        db.remove(key);
     }
 }
 
