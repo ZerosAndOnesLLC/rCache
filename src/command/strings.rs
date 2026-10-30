@@ -1,15 +1,17 @@
-use bytes::Bytes;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Helper to parse a value as i64 from a RedisObject::String.
 fn parse_int(obj: &RedisObject) -> Result<i64, RespValue> {
     match obj {
         RedisObject::String(b) => {
-            let s = std::str::from_utf8(b).map_err(|_| RespValue::error("ERR value is not an integer or out of range"))?;
-            s.parse::<i64>().map_err(|_| RespValue::error("ERR value is not an integer or out of range"))
+            let s = std::str::from_utf8(b)
+                .map_err(|_| RespValue::error("ERR value is not an integer or out of range"))?;
+            s.parse::<i64>()
+                .map_err(|_| RespValue::error("ERR value is not an integer or out of range"))
         }
         _ => Err(RespValue::wrong_type()),
     }
@@ -18,8 +20,10 @@ fn parse_int(obj: &RedisObject) -> Result<i64, RespValue> {
 fn parse_float(obj: &RedisObject) -> Result<f64, RespValue> {
     match obj {
         RedisObject::String(b) => {
-            let s = std::str::from_utf8(b).map_err(|_| RespValue::error("ERR value is not a valid float"))?;
-            s.parse::<f64>().map_err(|_| RespValue::error("ERR value is not a valid float"))
+            let s = std::str::from_utf8(b)
+                .map_err(|_| RespValue::error("ERR value is not a valid float"))?;
+            s.parse::<f64>()
+                .map_err(|_| RespValue::error("ERR value is not a valid float"))
         }
         _ => Err(RespValue::wrong_type()),
     }
@@ -38,13 +42,16 @@ fn parse_arg_int(b: &Bytes) -> Result<i64, RespValue> {
 
 #[inline]
 fn parse_arg_float(b: &Bytes) -> Result<f64, RespValue> {
-    let s = std::str::from_utf8(b)
-        .map_err(|_| RespValue::error("ERR value is not a valid float"))?;
+    let s =
+        std::str::from_utf8(b).map_err(|_| RespValue::error("ERR value is not a valid float"))?;
     s.parse::<f64>()
         .map_err(|_| RespValue::error("ERR value is not a valid float"))
 }
 
-fn get_string<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a Bytes>, RespValue> {
+fn get_string<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<Option<&'a Bytes>, RespValue> {
     match ctx.db().get(key) {
         Some(RedisObject::String(b)) => Ok(Some(b)),
         Some(_) => Err(RespValue::wrong_type()),
@@ -97,7 +104,10 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                     Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 if ts <= now {
                     return RespValue::error("ERR invalid expire time in 'set' command");
                 }
@@ -112,7 +122,10 @@ pub fn cmd_set(ctx: &mut CommandContext) -> RespValue {
                     Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'set' command"),
                 };
-                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
                 if ts_ms <= now_ms {
                     return RespValue::error("ERR invalid expire time in 'set' command");
                 }
@@ -405,8 +418,16 @@ pub fn cmd_getrange(ctx: &mut CommandContext) -> RespValue {
                 return RespValue::bulk_string(Bytes::new());
             }
             let len = b.len() as i64;
-            let s = if start < 0 { (len + start).max(0) } else { start } as usize;
-            let e = if end < 0 { (len + end).max(0) } else { end.min(len - 1) } as usize;
+            let s = if start < 0 {
+                (len + start).max(0)
+            } else {
+                start
+            } as usize;
+            let e = if end < 0 {
+                (len + end).max(0)
+            } else {
+                end.min(len - 1)
+            } as usize;
             if s > e || s >= b.len() {
                 return RespValue::bulk_string(Bytes::new());
             }
@@ -434,9 +455,7 @@ pub fn cmd_setrange(ctx: &mut CommandContext) -> RespValue {
     let needed = match offset.checked_add(value.len()) {
         Some(n) if n <= MAX_STRING_BYTES => n,
         _ => {
-            return RespValue::error(
-                "ERR string exceeds maximum allowed size (proto-max-bulk-len)",
-            )
+            return RespValue::error("ERR string exceeds maximum allowed size (proto-max-bulk-len)");
         }
     };
 
@@ -485,44 +504,62 @@ pub fn cmd_getex(ctx: &mut CommandContext) -> RespValue {
         let opt = String::from_utf8_lossy(&ctx.args[2]).to_uppercase();
         match opt.as_str() {
             "EX" => {
-                if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
+                if ctx.args.len() < 4 {
+                    return RespValue::error("ERR syntax error");
+                }
                 let secs = match super::parse::u64_(&ctx.args[3]) {
                     Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
-                ctx.db().set_expire(&key, Instant::now() + Duration::from_secs(secs));
+                ctx.db()
+                    .set_expire(&key, Instant::now() + Duration::from_secs(secs));
             }
             "PX" => {
-                if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
+                if ctx.args.len() < 4 {
+                    return RespValue::error("ERR syntax error");
+                }
                 let ms = match super::parse::u64_(&ctx.args[3]) {
                     Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
-                ctx.db().set_expire(&key, Instant::now() + Duration::from_millis(ms));
+                ctx.db()
+                    .set_expire(&key, Instant::now() + Duration::from_millis(ms));
             }
             "EXAT" => {
-                if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
+                if ctx.args.len() < 4 {
+                    return RespValue::error("ERR syntax error");
+                }
                 let ts = match super::parse::u64_(&ctx.args[3]) {
                     Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 if ts > now {
-                    ctx.db().set_expire(&key, Instant::now() + Duration::from_secs(ts - now));
+                    ctx.db()
+                        .set_expire(&key, Instant::now() + Duration::from_secs(ts - now));
                 } else {
                     // Timestamp in the past: delete the key immediately
                     ctx.db().remove(&key);
                 }
             }
             "PXAT" => {
-                if ctx.args.len() < 4 { return RespValue::error("ERR syntax error"); }
+                if ctx.args.len() < 4 {
+                    return RespValue::error("ERR syntax error");
+                }
                 let ts_ms = match super::parse::u64_(&ctx.args[3]) {
                     Some(v) if v > 0 => v,
                     _ => return RespValue::error("ERR invalid expire time in 'getex' command"),
                 };
-                let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
                 if ts_ms > now_ms {
-                    ctx.db().set_expire(&key, Instant::now() + Duration::from_millis(ts_ms - now_ms));
+                    ctx.db()
+                        .set_expire(&key, Instant::now() + Duration::from_millis(ts_ms - now_ms));
                 } else {
                     // Timestamp in the past: delete the key immediately
                     ctx.db().remove(&key);

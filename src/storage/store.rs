@@ -1,5 +1,5 @@
-use bytes::Bytes;
 use super::db::Database;
+use bytes::Bytes;
 
 /// Maximum size of the eviction pool for LFU.
 const EVICTION_POOL_SIZE: usize = 16;
@@ -106,7 +106,13 @@ impl Store {
     }
 
     /// Evict a single key according to policy. Returns false if no key could be evicted.
-    fn evict_one(&mut self, policy: &str, samples: usize, lfu_log_factor: u64, lfu_decay_time: u64) -> bool {
+    fn evict_one(
+        &mut self,
+        policy: &str,
+        samples: usize,
+        lfu_log_factor: u64,
+        lfu_decay_time: u64,
+    ) -> bool {
         use rand::seq::SliceRandom;
         let mut rng = rand::thread_rng();
 
@@ -139,21 +145,11 @@ impl Store {
                 }
                 false
             }
-            "allkeys-lru" => {
-                self.evict_lru(samples, false)
-            }
-            "volatile-lru" => {
-                self.evict_lru(samples, true)
-            }
-            "allkeys-lfu" => {
-                self.evict_lfu(samples, false, lfu_log_factor, lfu_decay_time)
-            }
-            "volatile-lfu" => {
-                self.evict_lfu(samples, true, lfu_log_factor, lfu_decay_time)
-            }
-            "volatile-ttl" => {
-                self.evict_volatile_ttl(samples)
-            }
+            "allkeys-lru" => self.evict_lru(samples, false),
+            "volatile-lru" => self.evict_lru(samples, true),
+            "allkeys-lfu" => self.evict_lfu(samples, false, lfu_log_factor, lfu_decay_time),
+            "volatile-lfu" => self.evict_lfu(samples, true, lfu_log_factor, lfu_decay_time),
+            "volatile-ttl" => self.evict_volatile_ttl(samples),
             _ => false,
         }
     }

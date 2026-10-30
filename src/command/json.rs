@@ -1,9 +1,9 @@
 use bytes::Bytes;
 use serde_json::Value;
 
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
 
 /// Resolve a JSONPath-like path into a reference to the target value.
 /// Supports: "." or "$" = root, "$.field", ".field", "[N]", nested paths.
@@ -251,7 +251,8 @@ pub fn cmd_json_get(ctx: &mut CommandContext) -> RespValue {
     }
 
     let key = ctx.args[1].clone();
-    let paths: Vec<String> = ctx.args[2..].iter()
+    let paths: Vec<String> = ctx.args[2..]
+        .iter()
         .map(|a| String::from_utf8_lossy(a).to_string())
         .collect();
     let db = ctx.db();
@@ -290,8 +291,7 @@ pub fn cmd_json_get(ctx: &mut CommandContext) -> RespValue {
                 }
             }
         }
-        let s = serde_json::to_string(&Value::Object(result))
-            .unwrap_or_else(|_| "{}".to_string());
+        let s = serde_json::to_string(&Value::Object(result)).unwrap_or_else(|_| "{}".to_string());
         RespValue::bulk_string(Bytes::from(s))
     }
 }
@@ -590,7 +590,11 @@ pub fn cmd_json_arrpop(ctx: &mut CommandContext) -> RespValue {
             let idx = match index {
                 Some(i) => {
                     let len = arr.len() as i64;
-                    let resolved = if i < 0 { (len + i).max(0) as usize } else { i.min(len - 1) as usize };
+                    let resolved = if i < 0 {
+                        (len + i).max(0) as usize
+                    } else {
+                        i.min(len - 1) as usize
+                    };
                     resolved
                 }
                 None => arr.len() - 1, // pop last

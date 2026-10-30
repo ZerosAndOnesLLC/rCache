@@ -111,7 +111,10 @@ fn validate_persistence_filename(name: &str, field: &str) -> Result<String, Stri
     }
     let path = std::path::Path::new(name);
     if path.is_absolute() {
-        return Err(format!("{} must be a relative filename, not an absolute path", field));
+        return Err(format!(
+            "{} must be a relative filename, not an absolute path",
+            field
+        ));
     }
     for component in path.components() {
         match component {

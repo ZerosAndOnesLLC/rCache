@@ -1,7 +1,7 @@
-use bytes::Bytes;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::scripting_engine;
-use super::registry::CommandContext;
+use bytes::Bytes;
 
 /// EVAL script numkeys key [key ...] arg [arg ...]
 pub fn cmd_eval(ctx: &mut CommandContext) -> RespValue {
@@ -57,7 +57,14 @@ pub fn cmd_evalsha(ctx: &mut CommandContext) -> RespValue {
             let keys: Vec<Bytes> = ctx.args[3..3 + numkeys].to_vec();
             let argv: Vec<Bytes> = ctx.args[3 + numkeys..].to_vec();
             let readonly = String::from_utf8_lossy(&ctx.args[0]).eq_ignore_ascii_case("evalsha_ro");
-            scripting_engine::execute_script(&script_source, &keys, &argv, ctx.store, ctx.db_index, readonly)
+            scripting_engine::execute_script(
+                &script_source,
+                &keys,
+                &argv,
+                ctx.store,
+                ctx.db_index,
+                readonly,
+            )
         }
         None => RespValue::error(format!("NOSCRIPT No matching script. Please use EVAL.")),
     }
@@ -184,12 +191,15 @@ pub fn cmd_function(ctx: &mut CommandContext) -> RespValue {
                     }
                 }
 
-                libs.insert(name.clone(), FunctionLibEntry {
-                    name: name.clone(),
-                    engine: "LUA".to_string(),
-                    code,
-                    functions,
-                });
+                libs.insert(
+                    name.clone(),
+                    FunctionLibEntry {
+                        name: name.clone(),
+                        engine: "LUA".to_string(),
+                        code,
+                        functions,
+                    },
+                );
                 RespValue::bulk_string(Bytes::from(name))
             } else {
                 RespValue::error("ERR internal error")
@@ -199,7 +209,9 @@ pub fn cmd_function(ctx: &mut CommandContext) -> RespValue {
             if let Ok(libs) = FUNCTION_LIBS.lock() {
                 let mut result = Vec::new();
                 for lib in libs.values() {
-                    let fnames: Vec<RespValue> = lib.functions.keys()
+                    let fnames: Vec<RespValue> = lib
+                        .functions
+                        .keys()
                         .map(|f| {
                             RespValue::array(vec![
                                 RespValue::bulk_string(Bytes::from("name")),
@@ -275,14 +287,13 @@ pub fn cmd_fcall(ctx: &mut CommandContext) -> RespValue {
 
     // Look up the function in libraries
     let code = if let Ok(libs) = FUNCTION_LIBS.lock() {
-        libs.values()
-            .find_map(|lib| {
-                if lib.functions.contains_key(&fname) {
-                    Some(lib.code.clone())
-                } else {
-                    None
-                }
-            })
+        libs.values().find_map(|lib| {
+            if lib.functions.contains_key(&fname) {
+                Some(lib.code.clone())
+            } else {
+                None
+            }
+        })
     } else {
         None
     };
@@ -292,7 +303,14 @@ pub fn cmd_fcall(ctx: &mut CommandContext) -> RespValue {
             let keys: Vec<Bytes> = ctx.args[3..3 + numkeys].to_vec();
             let argv: Vec<Bytes> = ctx.args[3 + numkeys..].to_vec();
             let readonly = String::from_utf8_lossy(&ctx.args[0]).eq_ignore_ascii_case("fcall_ro");
-            scripting_engine::execute_script(&script, &keys, &argv, ctx.store, ctx.db_index, readonly)
+            scripting_engine::execute_script(
+                &script,
+                &keys,
+                &argv,
+                ctx.store,
+                ctx.db_index,
+                readonly,
+            )
         }
         None => RespValue::error(format!("ERR Function not found")),
     }
@@ -304,8 +322,8 @@ pub fn cmd_fcall_ro(ctx: &mut CommandContext) -> RespValue {
 }
 
 // Global script cache and function library (accessible from command handlers).
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 static SCRIPT_CACHE: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));

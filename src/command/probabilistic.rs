@@ -1,7 +1,7 @@
-use bytes::Bytes;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
 
 /// Upper bound on the backing-array size (in bytes) any probabilistic structure
 /// may allocate (256 MB). Client-supplied width/depth/capacity are validated
@@ -450,11 +450,7 @@ fn cms_query(data: &[u8], item: &[u8]) -> u64 {
         min_count = min_count.min(count);
     }
 
-    if min_count == u64::MAX {
-        0
-    } else {
-        min_count
-    }
+    if min_count == u64::MAX { 0 } else { min_count }
 }
 
 fn get_or_error_cms(ctx: &mut CommandContext, key: &Bytes) -> Result<Vec<u8>, RespValue> {
@@ -636,9 +632,7 @@ pub fn cmd_cms_merge(ctx: &mut CommandContext) -> RespValue {
         let first = String::from_utf8_lossy(&remaining[0]).to_uppercase();
         if first == "WEIGHTS" {
             if remaining.len() != 1 + numkeys {
-                return RespValue::error(
-                    "ERR wrong number of weights for 'cms.merge' command",
-                );
+                return RespValue::error("ERR wrong number of weights for 'cms.merge' command");
             }
             for (i, w) in remaining[1..].iter().enumerate() {
                 match std::str::from_utf8(w).ok().and_then(|s| s.parse().ok()) {
@@ -673,9 +667,7 @@ pub fn cmd_cms_merge(ctx: &mut CommandContext) -> RespValue {
                     }
                     source_data.push(b.to_vec());
                 } else {
-                    return RespValue::error(
-                        "WRONGTYPE Key is not a valid Count-Min Sketch",
-                    );
+                    return RespValue::error("WRONGTYPE Key is not a valid Count-Min Sketch");
                 }
             }
             Some(_) => return RespValue::wrong_type(),
@@ -847,8 +839,7 @@ impl TopKState {
             if pos + 4 > data.len() {
                 break;
             }
-            let name_len =
-                u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+            let name_len = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
             pos += 4;
             if pos + name_len + 8 > data.len() {
                 break;
@@ -929,11 +920,7 @@ impl TopKState {
             min_count = min_count.min(self.counters[idx]);
         }
 
-        if min_count == u64::MAX {
-            0
-        } else {
-            min_count
-        }
+        if min_count == u64::MAX { 0 } else { min_count }
     }
 
     /// Add an item, return the evicted item name if any
@@ -1125,8 +1112,8 @@ pub fn cmd_topk_query(ctx: &mut CommandContext) -> RespValue {
 pub fn cmd_topk_list(ctx: &mut CommandContext) -> RespValue {
     let key = ctx.args[1].clone();
 
-    let with_count = ctx.args.len() > 2
-        && String::from_utf8_lossy(&ctx.args[2]).to_uppercase() == "WITHCOUNT";
+    let with_count =
+        ctx.args.len() > 2 && String::from_utf8_lossy(&ctx.args[2]).to_uppercase() == "WITHCOUNT";
 
     let state = match get_or_error_topk(ctx, &key) {
         Ok(s) => s,

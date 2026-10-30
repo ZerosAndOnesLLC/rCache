@@ -234,16 +234,14 @@ pub fn execute_script(
         // Set KEYS table
         let keys_table = lua.create_table()?;
         for (i, key) in keys.iter().enumerate() {
-            keys_table
-                .set(i + 1, String::from_utf8_lossy(key).to_string())?;
+            keys_table.set(i + 1, String::from_utf8_lossy(key).to_string())?;
         }
         globals.set("KEYS", keys_table)?;
 
         // Set ARGV table
         let argv_table = lua.create_table()?;
         for (i, arg) in argv.iter().enumerate() {
-            argv_table
-                .set(i + 1, String::from_utf8_lossy(arg).to_string())?;
+            argv_table.set(i + 1, String::from_utf8_lossy(arg).to_string())?;
         }
         globals.set("ARGV", argv_table)?;
 
@@ -399,16 +397,21 @@ fn execute_redis_command(
     // without bound and overflow the native stack, aborting the process.
     if matches!(
         cmd.as_str(),
-        "EVAL" | "EVALSHA" | "EVAL_RO" | "EVALSHA_RO" | "FCALL" | "FCALL_RO" | "FUNCTION" | "SCRIPT"
+        "EVAL"
+            | "EVALSHA"
+            | "EVAL_RO"
+            | "EVALSHA_RO"
+            | "FCALL"
+            | "FCALL_RO"
+            | "FUNCTION"
+            | "SCRIPT"
     ) {
         return RespValue::error("ERR This Redis command is not allowed from script");
     }
 
     // In read-only script context, reject write commands.
     if readonly && crate::persistence::aof::is_write_command(&cmd) {
-        return RespValue::error(
-            "ERR Write commands are not allowed from read-only scripts.",
-        );
+        return RespValue::error("ERR Write commands are not allowed from read-only scripts.");
     }
 
     // Block non-deterministic commands whose output could drive a write, so a
@@ -417,8 +420,15 @@ fn execute_redis_command(
     // deterministic-script requirement).
     if matches!(
         cmd.as_str(),
-        "RANDOMKEY" | "SRANDMEMBER" | "ZRANDMEMBER" | "HRANDFIELD" | "TIME"
-            | "SCAN" | "SSCAN" | "HSCAN" | "ZSCAN"
+        "RANDOMKEY"
+            | "SRANDMEMBER"
+            | "ZRANDMEMBER"
+            | "HRANDFIELD"
+            | "TIME"
+            | "SCAN"
+            | "SSCAN"
+            | "HSCAN"
+            | "ZSCAN"
     ) {
         return RespValue::error(format!(
             "ERR '{}' is not allowed from script: it is non-deterministic",
@@ -487,9 +497,7 @@ fn lua_to_resp(val: &mlua::Value) -> RespValue {
                 RespValue::bulk_string(Bytes::from(n.to_string()))
             }
         }
-        mlua::Value::String(s) => {
-            RespValue::bulk_string(Bytes::from(s.as_bytes().to_vec()))
-        }
+        mlua::Value::String(s) => RespValue::bulk_string(Bytes::from(s.as_bytes().to_vec())),
         mlua::Value::Table(t) => {
             // Check if it's an error table {err = "..."}
             if let Ok(err) = t.get::<String>("err") {
@@ -606,7 +614,7 @@ mod tests {
         // pcall should catch the error
         match result {
             RespValue::BulkString(_) => {} // Got the error string back
-            _ => {} // Any non-panic result is fine
+            _ => {}                        // Any non-panic result is fine
         }
     }
 }

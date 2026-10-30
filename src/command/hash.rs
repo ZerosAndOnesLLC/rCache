@@ -1,15 +1,21 @@
-use bytes::Bytes;
-use std::collections::HashMap;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
+use std::collections::HashMap;
 
 /// Upper bound on the magnitude of a negative HRANDFIELD `count` (the
 /// with-duplicates form), preventing an unbounded allocation.
 const MAX_RAND_COUNT: u64 = 1_000_000;
 
-fn ensure_hash<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut HashMap<Bytes, Bytes>, RespValue> {
-    match ctx.db().get_or_insert_with(key, || RedisObject::Hash(HashMap::new())) {
+fn ensure_hash<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<&'a mut HashMap<Bytes, Bytes>, RespValue> {
+    match ctx
+        .db()
+        .get_or_insert_with(key, || RedisObject::Hash(HashMap::new()))
+    {
         RedisObject::Hash(h) => Ok(h),
         _ => Err(RespValue::wrong_type()),
     }
@@ -71,12 +77,10 @@ pub fn cmd_hget(ctx: &mut CommandContext) -> RespValue {
     let field = ctx.args[2].clone();
     let db = ctx.db();
     match db.get(&key) {
-        Some(RedisObject::Hash(h)) => {
-            match h.get(&field) {
-                Some(v) => RespValue::bulk_string(v.clone()),
-                None => RespValue::Null,
-            }
-        }
+        Some(RedisObject::Hash(h)) => match h.get(&field) {
+            Some(v) => RespValue::bulk_string(v.clone()),
+            None => RespValue::Null,
+        },
         Some(_) => RespValue::wrong_type(),
         None => RespValue::Null,
     }
@@ -88,7 +92,8 @@ pub fn cmd_hmget(ctx: &mut CommandContext) -> RespValue {
     let db = ctx.db();
     match db.get(&key) {
         Some(RedisObject::Hash(h)) => {
-            let results: Vec<RespValue> = fields.iter()
+            let results: Vec<RespValue> = fields
+                .iter()
                 .map(|f| match h.get(f) {
                     Some(v) => RespValue::bulk_string(v.clone()),
                     None => RespValue::Null,
@@ -126,7 +131,9 @@ pub fn cmd_hexists(ctx: &mut CommandContext) -> RespValue {
     let field = ctx.args[2].clone();
     let db = ctx.db();
     match db.get(&key) {
-        Some(RedisObject::Hash(h)) => RespValue::integer(if h.contains_key(&field) { 1 } else { 0 }),
+        Some(RedisObject::Hash(h)) => {
+            RespValue::integer(if h.contains_key(&field) { 1 } else { 0 })
+        }
         Some(_) => RespValue::wrong_type(),
         None => RespValue::integer(0),
     }
@@ -147,7 +154,10 @@ pub fn cmd_hkeys(ctx: &mut CommandContext) -> RespValue {
     let db = ctx.db();
     match db.get(&key) {
         Some(RedisObject::Hash(h)) => {
-            let items: Vec<RespValue> = h.keys().map(|k| RespValue::bulk_string(k.clone())).collect();
+            let items: Vec<RespValue> = h
+                .keys()
+                .map(|k| RespValue::bulk_string(k.clone()))
+                .collect();
             RespValue::array(items)
         }
         Some(_) => RespValue::wrong_type(),
@@ -160,7 +170,10 @@ pub fn cmd_hvals(ctx: &mut CommandContext) -> RespValue {
     let db = ctx.db();
     match db.get(&key) {
         Some(RedisObject::Hash(h)) => {
-            let items: Vec<RespValue> = h.values().map(|v| RespValue::bulk_string(v.clone())).collect();
+            let items: Vec<RespValue> = h
+                .values()
+                .map(|v| RespValue::bulk_string(v.clone()))
+                .collect();
             RespValue::array(items)
         }
         Some(_) => RespValue::wrong_type(),
@@ -199,12 +212,10 @@ pub fn cmd_hincrby(ctx: &mut CommandContext) -> RespValue {
     };
 
     let current: i64 = match hash.get(&field) {
-        Some(v) => {
-            match std::str::from_utf8(v).ok().and_then(|s| s.parse().ok()) {
-                Some(n) => n,
-                None => return RespValue::error("ERR hash value is not an integer"),
-            }
-        }
+        Some(v) => match std::str::from_utf8(v).ok().and_then(|s| s.parse().ok()) {
+            Some(n) => n,
+            None => return RespValue::error("ERR hash value is not an integer"),
+        },
         None => 0,
     };
 
@@ -231,12 +242,10 @@ pub fn cmd_hincrbyfloat(ctx: &mut CommandContext) -> RespValue {
     };
 
     let current: f64 = match hash.get(&field) {
-        Some(v) => {
-            match std::str::from_utf8(v).ok().and_then(|s| s.parse().ok()) {
-                Some(n) => n,
-                None => return RespValue::error("ERR hash value is not a valid float"),
-            }
-        }
+        Some(v) => match std::str::from_utf8(v).ok().and_then(|s| s.parse().ok()) {
+            Some(n) => n,
+            None => return RespValue::error("ERR hash value is not a valid float"),
+        },
         None => 0.0,
     };
 
@@ -255,12 +264,10 @@ pub fn cmd_hstrlen(ctx: &mut CommandContext) -> RespValue {
     let field = ctx.args[2].clone();
     let db = ctx.db();
     match db.get(&key) {
-        Some(RedisObject::Hash(h)) => {
-            match h.get(&field) {
-                Some(v) => RespValue::integer(v.len() as i64),
-                None => RespValue::integer(0),
-            }
-        }
+        Some(RedisObject::Hash(h)) => match h.get(&field) {
+            Some(v) => RespValue::integer(v.len() as i64),
+            None => RespValue::integer(0),
+        },
         Some(_) => RespValue::wrong_type(),
         None => RespValue::integer(0),
     }
@@ -277,14 +284,18 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
         None
     };
 
-    let with_values = ctx.args.len() > 3 &&
-        String::from_utf8_lossy(&ctx.args[3]).to_uppercase() == "WITHVALUES";
+    let with_values =
+        ctx.args.len() > 3 && String::from_utf8_lossy(&ctx.args[3]).to_uppercase() == "WITHVALUES";
 
     let db = ctx.db();
     match db.get(&key) {
         Some(RedisObject::Hash(hash)) => {
             if hash.is_empty() {
-                return if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null };
+                return if count.is_some() {
+                    RespValue::array(vec![])
+                } else {
+                    RespValue::Null
+                };
             }
 
             use rand::seq::IteratorRandom;
@@ -297,7 +308,8 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
                 }
                 Some(n) if n >= 0 => {
                     let n = n as usize;
-                    let fields: Vec<(Bytes, Bytes)> = hash.iter()
+                    let fields: Vec<(Bytes, Bytes)> = hash
+                        .iter()
                         .choose_multiple(&mut rng, n.min(hash.len()))
                         .into_iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
@@ -310,7 +322,12 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
                         }
                         RespValue::array(items)
                     } else {
-                        RespValue::array(fields.into_iter().map(|(k, _)| RespValue::bulk_string(k)).collect())
+                        RespValue::array(
+                            fields
+                                .into_iter()
+                                .map(|(k, _)| RespValue::bulk_string(k))
+                                .collect(),
+                        )
                     }
                 }
                 Some(n) => {
@@ -321,7 +338,8 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
                         _ => return RespValue::error("ERR count value is out of range"),
                     };
                     use rand::seq::SliceRandom;
-                    let entries: Vec<(Bytes, Bytes)> = hash.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    let entries: Vec<(Bytes, Bytes)> =
+                        hash.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                     let mut items = Vec::new();
                     for _ in 0..n {
                         let (k, v) = entries.choose(&mut rng).unwrap();
@@ -337,6 +355,12 @@ pub fn cmd_hrandfield(ctx: &mut CommandContext) -> RespValue {
             }
         }
         Some(_) => RespValue::wrong_type(),
-        None => if count.is_some() { RespValue::array(vec![]) } else { RespValue::Null },
+        None => {
+            if count.is_some() {
+                RespValue::array(vec![])
+            } else {
+                RespValue::Null
+            }
+        }
     }
 }

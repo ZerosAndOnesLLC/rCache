@@ -1,14 +1,14 @@
 #![warn(dead_code)]
 
+mod command;
+pub mod compression;
+mod config;
+mod http;
+pub mod persistence;
 mod protocol;
+pub mod scripting_engine;
 mod server;
 mod storage;
-mod command;
-mod config;
-pub mod persistence;
-mod http;
-pub mod scripting_engine;
-pub mod compression;
 
 use config::Config;
 use server::Server;
@@ -18,7 +18,9 @@ use tracing_subscriber::EnvFilter;
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("rcache=info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("rcache=info".parse().unwrap()),
+        )
         .init();
 
     let config = Config::from_args();

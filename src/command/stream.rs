@@ -2,11 +2,11 @@ use bytes::Bytes;
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::types::{
     ConsumerData, ConsumerGroup, PendingEntry, RedisObject, StreamData, StreamId,
 };
-use super::registry::CommandContext;
 
 // === Helper functions ===
 
@@ -26,13 +26,13 @@ fn parse_stream_id(s: &str) -> Result<StreamId, RespValue> {
     }
 
     let parts: Vec<&str> = s.splitn(2, '-').collect();
-    let ms: u64 = parts[0]
-        .parse()
-        .map_err(|_| RespValue::error("ERR Invalid stream ID specified as stream command argument"))?;
+    let ms: u64 = parts[0].parse().map_err(|_| {
+        RespValue::error("ERR Invalid stream ID specified as stream command argument")
+    })?;
     let seq: u64 = if parts.len() > 1 {
-        parts[1]
-            .parse()
-            .map_err(|_| RespValue::error("ERR Invalid stream ID specified as stream command argument"))?
+        parts[1].parse().map_err(|_| {
+            RespValue::error("ERR Invalid stream ID specified as stream command argument")
+        })?
     } else {
         0
     };
@@ -48,13 +48,13 @@ fn parse_stream_id_for_range_start(s: &str) -> Result<StreamId, RespValue> {
         return Ok(StreamId::max());
     }
     let parts: Vec<&str> = s.splitn(2, '-').collect();
-    let ms: u64 = parts[0]
-        .parse()
-        .map_err(|_| RespValue::error("ERR Invalid stream ID specified as stream command argument"))?;
+    let ms: u64 = parts[0].parse().map_err(|_| {
+        RespValue::error("ERR Invalid stream ID specified as stream command argument")
+    })?;
     let seq: u64 = if parts.len() > 1 {
-        parts[1]
-            .parse()
-            .map_err(|_| RespValue::error("ERR Invalid stream ID specified as stream command argument"))?
+        parts[1].parse().map_err(|_| {
+            RespValue::error("ERR Invalid stream ID specified as stream command argument")
+        })?
     } else {
         0
     };
@@ -69,13 +69,13 @@ fn parse_stream_id_for_range_end(s: &str) -> Result<StreamId, RespValue> {
         return Ok(StreamId::min());
     }
     let parts: Vec<&str> = s.splitn(2, '-').collect();
-    let ms: u64 = parts[0]
-        .parse()
-        .map_err(|_| RespValue::error("ERR Invalid stream ID specified as stream command argument"))?;
+    let ms: u64 = parts[0].parse().map_err(|_| {
+        RespValue::error("ERR Invalid stream ID specified as stream command argument")
+    })?;
     let seq: u64 = if parts.len() > 1 {
-        parts[1]
-            .parse()
-            .map_err(|_| RespValue::error("ERR Invalid stream ID specified as stream command argument"))?
+        parts[1].parse().map_err(|_| {
+            RespValue::error("ERR Invalid stream ID specified as stream command argument")
+        })?
     } else {
         u64::MAX
     };
@@ -143,10 +143,7 @@ fn trim_stream_maxlen(stream: &mut StreamData, maxlen: usize, approximate: bool)
 fn trim_stream_minid(stream: &mut StreamData, minid: &StreamId, approximate: bool) {
     if approximate {
         // Approximate: be less aggressive
-        let count_below: usize = stream
-            .entries
-            .range(..minid)
-            .count();
+        let count_below: usize = stream.entries.range(..minid).count();
         if count_below < 10 {
             return;
         }
@@ -161,10 +158,7 @@ fn trim_stream_minid(stream: &mut StreamData, minid: &StreamId, approximate: boo
     }
 }
 
-fn parse_trim_args(
-    args: &[Bytes],
-    start: usize,
-) -> Result<Option<TrimConfig>, RespValue> {
+fn parse_trim_args(args: &[Bytes], start: usize) -> Result<Option<TrimConfig>, RespValue> {
     if start >= args.len() {
         return Ok(None);
     }
@@ -208,10 +202,7 @@ fn parse_trim_args(
             let minid = parse_stream_id(&threshold_str)?;
             idx += 1;
             let _limit = parse_limit_arg(args, &mut idx)?;
-            Ok(Some(TrimConfig::MinId {
-                minid,
-                approximate,
-            }))
+            Ok(Some(TrimConfig::MinId { minid, approximate }))
         }
         _ => Err(RespValue::error("ERR syntax error")),
     }
@@ -243,7 +234,10 @@ enum TrimConfig {
 fn apply_trim(stream: &mut StreamData, trim: &TrimConfig) -> usize {
     let before = stream.entries.len();
     match trim {
-        TrimConfig::MaxLen { maxlen, approximate } => {
+        TrimConfig::MaxLen {
+            maxlen,
+            approximate,
+        } => {
             trim_stream_maxlen(stream, *maxlen, *approximate);
         }
         TrimConfig::MinId { minid, approximate } => {
@@ -362,7 +356,7 @@ pub fn cmd_xadd(ctx: &mut CommandContext) -> RespValue {
             Err(_) => {
                 return RespValue::error(
                     "ERR Invalid stream ID specified as stream command argument",
-                )
+                );
             }
         };
         let seq: u64 = if parts.len() > 1 {
@@ -381,7 +375,7 @@ pub fn cmd_xadd(ctx: &mut CommandContext) -> RespValue {
                     Err(_) => {
                         return RespValue::error(
                             "ERR Invalid stream ID specified as stream command argument",
-                        )
+                        );
                     }
                 }
             }
@@ -606,9 +600,7 @@ pub fn cmd_xread(ctx: &mut CommandContext) -> RespValue {
                 }
                 count = Some(match super::parse::usize_(&ctx.args[idx]) {
                     Some(v) => v,
-                    None => {
-                        return RespValue::error("ERR value is not an integer or out of range")
-                    }
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
                 idx += 1;
             }
@@ -814,11 +806,7 @@ fn cmd_xinfo_consumers(ctx: &mut CommandContext) -> RespValue {
         Some(RedisObject::Stream(s)) => {
             let group = match s.groups.get(&group_name) {
                 Some(g) => g,
-                None => {
-                    return RespValue::error(
-                        "NOGROUP No such consumer group for key name",
-                    )
-                }
+                None => return RespValue::error("NOGROUP No such consumer group for key name"),
             };
 
             let mut results: Vec<RespValue> = Vec::new();
@@ -889,8 +877,8 @@ fn cmd_xgroup_create(ctx: &mut CommandContext) -> RespValue {
     let group_name = ctx.args[3].clone();
     let id_str = String::from_utf8_lossy(&ctx.args[4]).to_string();
 
-    let mkstream = ctx.args.len() > 5
-        && String::from_utf8_lossy(&ctx.args[5]).to_uppercase() == "MKSTREAM";
+    let mkstream =
+        ctx.args.len() > 5 && String::from_utf8_lossy(&ctx.args[5]).to_uppercase() == "MKSTREAM";
 
     let db = ctx.db();
 
@@ -900,7 +888,9 @@ fn cmd_xgroup_create(ctx: &mut CommandContext) -> RespValue {
         if mkstream {
             db.set(key.clone(), RedisObject::Stream(StreamData::new()));
         } else {
-            return RespValue::error("ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.");
+            return RespValue::error(
+                "ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.",
+            );
         }
     }
 
@@ -1097,9 +1087,7 @@ pub fn cmd_xreadgroup(ctx: &mut CommandContext) -> RespValue {
                 }
                 count = Some(match super::parse::usize_(&ctx.args[idx]) {
                     Some(v) => v,
-                    None => {
-                        return RespValue::error("ERR value is not an integer or out of range")
-                    }
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
                 idx += 1;
             }
@@ -1147,17 +1135,13 @@ pub fn cmd_xreadgroup(ctx: &mut CommandContext) -> RespValue {
             Some(RedisObject::Stream(s)) => s,
             Some(_) => return RespValue::wrong_type(),
             None => {
-                return RespValue::error("ERR The XREADGROUP subcommand requires the key to exist.")
+                return RespValue::error("ERR The XREADGROUP subcommand requires the key to exist.");
             }
         };
 
         let group = match stream.groups.get_mut(&group_name) {
             Some(g) => g,
-            None => {
-                return RespValue::error(
-                    "NOGROUP No such consumer group for key name",
-                )
-            }
+            None => return RespValue::error("NOGROUP No such consumer group for key name"),
         };
 
         // Ensure consumer exists
@@ -1341,8 +1325,7 @@ pub fn cmd_xpending(ctx: &mut CommandContext) -> RespValue {
 
     // Clone all needed args before borrowing ctx.db()
     let is_summary = args_len == 3
-        || (args_len == 4
-            && String::from_utf8_lossy(&ctx.args[3]).to_uppercase() == "IDLE");
+        || (args_len == 4 && String::from_utf8_lossy(&ctx.args[3]).to_uppercase() == "IDLE");
 
     // Pre-parse detailed form args
     let (min_idle, start_str, end_str, detail_count, consumer_filter) = if !is_summary {
@@ -1358,9 +1341,7 @@ pub fn cmd_xpending(ctx: &mut CommandContext) -> RespValue {
                 }
                 min_idle_val = Some(match super::parse::u64_(&ctx.args[idx]) {
                     Some(v) => v,
-                    None => {
-                        return RespValue::error("ERR value is not an integer or out of range")
-                    }
+                    None => return RespValue::error("ERR value is not an integer or out of range"),
                 });
                 idx += 1;
             }
@@ -1398,9 +1379,7 @@ pub fn cmd_xpending(ctx: &mut CommandContext) -> RespValue {
 
     let group = match stream.groups.get(&group_name) {
         Some(g) => g,
-        None => {
-            return RespValue::error("NOGROUP No such consumer group for key name")
-        }
+        None => return RespValue::error("NOGROUP No such consumer group for key name"),
     };
 
     if is_summary {
@@ -1511,8 +1490,11 @@ pub fn cmd_xclaim(ctx: &mut CommandContext) -> RespValue {
     for i in 5..ctx.args.len() {
         let arg_str = String::from_utf8_lossy(&ctx.args[i]).to_uppercase();
         // Stop at option flags
-        if arg_str == "IDLE" || arg_str == "TIME" || arg_str == "RETRYCOUNT"
-            || arg_str == "FORCE" || arg_str == "JUSTID"
+        if arg_str == "IDLE"
+            || arg_str == "TIME"
+            || arg_str == "RETRYCOUNT"
+            || arg_str == "FORCE"
+            || arg_str == "JUSTID"
         {
             break;
         }
@@ -1533,9 +1515,7 @@ pub fn cmd_xclaim(ctx: &mut CommandContext) -> RespValue {
 
     let group = match stream.groups.get_mut(&group_name) {
         Some(g) => g,
-        None => {
-            return RespValue::error("NOGROUP No such consumer group for key name")
-        }
+        None => return RespValue::error("NOGROUP No such consumer group for key name"),
     };
 
     // Ensure consumer exists
@@ -1627,15 +1607,13 @@ pub fn cmd_xautoclaim(ctx: &mut CommandContext) -> RespValue {
                 RespValue::bulk_string(Bytes::from("0-0")),
                 RespValue::array(vec![]),
                 RespValue::array(vec![]),
-            ])
+            ]);
         }
     };
 
     let group = match stream.groups.get_mut(&group_name) {
         Some(g) => g,
-        None => {
-            return RespValue::error("NOGROUP No such consumer group for key name")
-        }
+        None => return RespValue::error("NOGROUP No such consumer group for key name"),
     };
 
     // Ensure consumer exists
@@ -1731,7 +1709,10 @@ pub fn cmd_xsetid(ctx: &mut CommandContext) -> RespValue {
         Err(e) => return e,
     };
 
-    match ctx.db().get_or_insert_with(&key, || RedisObject::Stream(StreamData::new())) {
+    match ctx
+        .db()
+        .get_or_insert_with(&key, || RedisObject::Stream(StreamData::new()))
+    {
         RedisObject::Stream(s) => {
             s.last_id = new_id;
             RespValue::ok()

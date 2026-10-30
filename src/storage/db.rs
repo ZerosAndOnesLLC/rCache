@@ -1,7 +1,7 @@
+use super::types::RedisObject;
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::time::Instant;
-use super::types::RedisObject;
 
 /// Initial LFU counter value for new keys (matches Redis LFU_INIT_VAL).
 const LFU_INIT_VAL: u8 = 5;
@@ -270,7 +270,9 @@ impl Database {
         let mut rng = rand::thread_rng();
         let mut deleted = 0;
 
-        let expired_keys: Vec<Bytes> = self.expires.iter()
+        let expired_keys: Vec<Bytes> = self
+            .expires
+            .iter()
             .choose_multiple(&mut rng, sample_size)
             .into_iter()
             .filter(|(_, expire)| Instant::now() >= **expire)
@@ -296,7 +298,8 @@ impl Database {
         let keys: Vec<Bytes> = self.data.keys().cloned().collect();
         // [M3] Collect expired keys during iteration and clean them up after
         let mut expired_keys = Vec::new();
-        let result: Vec<Bytes> = keys.into_iter()
+        let result: Vec<Bytes> = keys
+            .into_iter()
             .filter(|k| {
                 if self.is_expired(k) {
                     expired_keys.push(k.clone());
@@ -416,7 +419,13 @@ impl Database {
     }
 
     /// Iterate keys for SCAN command. Returns (new_cursor, keys).
-    pub fn scan(&mut self, cursor: usize, pattern: Option<&str>, count: usize, type_filter: Option<&str>) -> (usize, Vec<Bytes>) {
+    pub fn scan(
+        &mut self,
+        cursor: usize,
+        pattern: Option<&str>,
+        count: usize,
+        type_filter: Option<&str>,
+    ) -> (usize, Vec<Bytes>) {
         let all_keys: Vec<Bytes> = self.data.keys().cloned().collect();
         let total = all_keys.len();
 
@@ -476,7 +485,10 @@ impl Database {
         use rand::Rng;
 
         let now_minutes = current_minutes();
-        let entry = self.lfu_map.entry(key.clone()).or_insert_with(LfuCounter::new);
+        let entry = self
+            .lfu_map
+            .entry(key.clone())
+            .or_insert_with(LfuCounter::new);
 
         // Decay: reduce counter based on elapsed time
         if lfu_decay_time > 0 {
@@ -560,11 +572,7 @@ impl Database {
     pub fn time_to_live(&self, key: &Bytes) -> Option<std::time::Duration> {
         self.expires.get(key).and_then(|exp| {
             let now = Instant::now();
-            if *exp > now {
-                Some(*exp - now)
-            } else {
-                None
-            }
+            if *exp > now { Some(*exp - now) } else { None }
         })
     }
 }
@@ -703,7 +711,10 @@ mod tests {
     fn test_lfu_counter_new_key() {
         let mut db = Database::new();
         let key = Bytes::from("test");
-        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        db.set(
+            key.clone(),
+            crate::storage::RedisObject::String(Bytes::from("val")),
+        );
         let counter = db.lfu_of(&key);
         assert!(counter.is_some());
         // New keys start at LFU_INIT_VAL (5) and may get incremented by touch
@@ -714,7 +725,10 @@ mod tests {
     fn test_lfu_counter_increments_on_access() {
         let mut db = Database::new();
         let key = Bytes::from("test");
-        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        db.set(
+            key.clone(),
+            crate::storage::RedisObject::String(Bytes::from("val")),
+        );
         let initial = db.lfu_of(&key).unwrap();
 
         // Access many times to probabilistically increase counter
@@ -723,14 +737,22 @@ mod tests {
         }
         let after = db.lfu_of(&key).unwrap();
         // After 1000 accesses, counter should have grown beyond initial
-        assert!(after > initial, "LFU counter should grow with access: initial={}, after={}", initial, after);
+        assert!(
+            after > initial,
+            "LFU counter should grow with access: initial={}, after={}",
+            initial,
+            after
+        );
     }
 
     #[test]
     fn test_lfu_counter_removed_on_delete() {
         let mut db = Database::new();
         let key = Bytes::from("test");
-        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        db.set(
+            key.clone(),
+            crate::storage::RedisObject::String(Bytes::from("val")),
+        );
         assert!(db.lfu_of(&key).is_some());
         db.remove(&key);
         assert!(db.lfu_of(&key).is_none());
@@ -740,7 +762,10 @@ mod tests {
     fn test_lfu_counter_cleared_on_flush() {
         let mut db = Database::new();
         let key = Bytes::from("test");
-        db.set(key.clone(), crate::storage::RedisObject::String(Bytes::from("val")));
+        db.set(
+            key.clone(),
+            crate::storage::RedisObject::String(Bytes::from("val")),
+        );
         assert!(db.lfu_of(&key).is_some());
         db.flush();
         assert!(db.lfu_of(&key).is_none());

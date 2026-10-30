@@ -1,9 +1,9 @@
 use bytes::Bytes;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
 
 // ============================================================================
 // Rate Limiting Commands
@@ -217,9 +217,7 @@ pub fn cmd_ratelimit_check(ctx: &mut CommandContext) -> RespValue {
                 } else if b.is_empty() {
                     new_sliding_window(max_requests, window_ms)
                 } else if is_ratelimit(b) {
-                    return RespValue::error(
-                        "WRONGTYPE Key holds a different rate limit type",
-                    );
+                    return RespValue::error("WRONGTYPE Key holds a different rate limit type");
                 } else {
                     return RespValue::error("WRONGTYPE Key is not a rate limit counter");
                 }
@@ -385,9 +383,7 @@ pub fn cmd_ratelimit_acquire(ctx: &mut CommandContext) -> RespValue {
                 } else if b.is_empty() {
                     new_token_bucket(rate, capacity)
                 } else if is_ratelimit(b) {
-                    return RespValue::error(
-                        "WRONGTYPE Key holds a different rate limit type",
-                    );
+                    return RespValue::error("WRONGTYPE Key holds a different rate limit type");
                 } else {
                     return RespValue::error("WRONGTYPE Key is not a rate limit counter");
                 }

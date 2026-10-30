@@ -1,7 +1,7 @@
-use bytes::Bytes;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
 
 /// Maximum addressable byte length of a string value (512 MB), matching Redis's
 /// proto-max-bulk-len. Bit offsets that would grow a string past this are
@@ -60,7 +60,8 @@ pub fn cmd_setbit(ctx: &mut CommandContext) -> RespValue {
         data[byte_idx] &= !(1 << bit_idx);
     }
 
-    ctx.db().set_keep_ttl(key, RedisObject::String(Bytes::from(data)));
+    ctx.db()
+        .set_keep_ttl(key, RedisObject::String(Bytes::from(data)));
     RespValue::integer(old_bit as i64)
 }
 
@@ -116,8 +117,8 @@ pub fn cmd_bitcount(ctx: &mut CommandContext) -> RespValue {
         None => return RespValue::error("ERR value is not an integer or out of range"),
     };
 
-    let use_bit = ctx.args.len() > 4 &&
-        String::from_utf8_lossy(&ctx.args[4]).to_uppercase() == "BIT";
+    let use_bit =
+        ctx.args.len() > 4 && String::from_utf8_lossy(&ctx.args[4]).to_uppercase() == "BIT";
 
     // An empty value has no bits/bytes to count. Guard here so the range math
     // below (`data.len() - 1` / `total_bits - 1`) can't underflow.
@@ -128,8 +129,16 @@ pub fn cmd_bitcount(ctx: &mut CommandContext) -> RespValue {
     if use_bit {
         // BIT mode: start and end are bit offsets
         let total_bits = data.len() * 8;
-        let s = if start < 0 { (total_bits as i64 + start).max(0) as usize } else { (start as usize).min(total_bits) };
-        let e = if end < 0 { (total_bits as i64 + end).max(0) as usize } else { (end as usize).min(total_bits - 1) };
+        let s = if start < 0 {
+            (total_bits as i64 + start).max(0) as usize
+        } else {
+            (start as usize).min(total_bits)
+        };
+        let e = if end < 0 {
+            (total_bits as i64 + end).max(0) as usize
+        } else {
+            (end as usize).min(total_bits - 1)
+        };
 
         if s > e {
             return RespValue::integer(0);
@@ -147,8 +156,16 @@ pub fn cmd_bitcount(ctx: &mut CommandContext) -> RespValue {
     } else {
         // BYTE mode (default)
         let len = data.len() as i64;
-        let s = if start < 0 { (len + start).max(0) as usize } else { (start as usize).min(data.len()) };
-        let e = if end < 0 { (len + end).max(0) as usize } else { (end as usize).min(data.len() - 1) };
+        let s = if start < 0 {
+            (len + start).max(0) as usize
+        } else {
+            (start as usize).min(data.len())
+        };
+        let e = if end < 0 {
+            (len + end).max(0) as usize
+        } else {
+            (end as usize).min(data.len() - 1)
+        };
 
         if s > e {
             return RespValue::integer(0);
@@ -171,16 +188,24 @@ pub fn cmd_bitpos(ctx: &mut CommandContext) -> RespValue {
         Some(RedisObject::String(b)) => b.clone(),
         Some(_) => return RespValue::wrong_type(),
         None => {
-            return if target == 0 { RespValue::integer(0) } else { RespValue::integer(-1) };
+            return if target == 0 {
+                RespValue::integer(0)
+            } else {
+                RespValue::integer(-1)
+            };
         }
     };
 
     if data.is_empty() {
-        return if target == 0 { RespValue::integer(0) } else { RespValue::integer(-1) };
+        return if target == 0 {
+            RespValue::integer(0)
+        } else {
+            RespValue::integer(-1)
+        };
     }
 
-    let use_bit = ctx.args.len() > 5 &&
-        String::from_utf8_lossy(&ctx.args[5]).to_uppercase() == "BIT";
+    let use_bit =
+        ctx.args.len() > 5 && String::from_utf8_lossy(&ctx.args[5]).to_uppercase() == "BIT";
     let has_end = ctx.args.len() > 4;
 
     let (start_byte, end_byte) = if ctx.args.len() > 3 {
@@ -200,8 +225,16 @@ pub fn cmd_bitpos(ctx: &mut CommandContext) -> RespValue {
         if use_bit {
             // BIT mode
             let total_bits = data.len() * 8;
-            let s = if start < 0 { (total_bits as i64 + start).max(0) as usize } else { (start as usize).min(total_bits) };
-            let e = if end < 0 { (total_bits as i64 + end).max(0) as usize } else { (end as usize).min(total_bits - 1) };
+            let s = if start < 0 {
+                (total_bits as i64 + start).max(0) as usize
+            } else {
+                (start as usize).min(total_bits)
+            };
+            let e = if end < 0 {
+                (total_bits as i64 + end).max(0) as usize
+            } else {
+                (end as usize).min(total_bits - 1)
+            };
 
             if s > e {
                 return RespValue::integer(-1);
@@ -221,8 +254,16 @@ pub fn cmd_bitpos(ctx: &mut CommandContext) -> RespValue {
         }
 
         let len = data.len() as i64;
-        let s = if start < 0 { (len + start).max(0) as usize } else { (start as usize).min(data.len()) };
-        let e = if end < 0 { (len + end).max(0) as usize } else { (end as usize).min(data.len() - 1) };
+        let s = if start < 0 {
+            (len + start).max(0) as usize
+        } else {
+            (start as usize).min(data.len())
+        };
+        let e = if end < 0 {
+            (len + end).max(0) as usize
+        } else {
+            (end as usize).min(data.len() - 1)
+        };
         (s, e)
     } else {
         (0, data.len() - 1)
@@ -266,7 +307,8 @@ pub fn cmd_bitop(ctx: &mut CommandContext) -> RespValue {
         };
         let result: Vec<u8> = src.iter().map(|b| !b).collect();
         let len = result.len() as i64;
-        ctx.db().set(destkey, RedisObject::String(Bytes::from(result)));
+        ctx.db()
+            .set(destkey, RedisObject::String(Bytes::from(result)));
         return RespValue::integer(len);
     }
 
@@ -309,7 +351,8 @@ pub fn cmd_bitop(ctx: &mut CommandContext) -> RespValue {
     }
 
     let len = result.len() as i64;
-    ctx.db().set(destkey, RedisObject::String(Bytes::from(result)));
+    ctx.db()
+        .set(destkey, RedisObject::String(Bytes::from(result)));
     RespValue::integer(len)
 }
 
@@ -337,7 +380,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                 };
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
-                    None => return RespValue::error("ERR bit offset is not an integer or out of range"),
+                    None => {
+                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                    }
                 };
                 i += 3;
 
@@ -355,7 +400,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                 };
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
-                    None => return RespValue::error("ERR bit offset is not an integer or out of range"),
+                    None => {
+                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                    }
                 };
                 let value = match super::parse::int(&ctx.args[i + 3]) {
                     Some(v) => v,
@@ -367,7 +414,8 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                 let old = read_bits(&data, offset, bits, signed);
                 let clamped = clamp_value(value, bits, signed, overflow);
                 write_bits(&mut data, offset, bits, clamped);
-                ctx.db().set_keep_ttl(key.clone(), RedisObject::String(Bytes::from(data)));
+                ctx.db()
+                    .set_keep_ttl(key.clone(), RedisObject::String(Bytes::from(data)));
                 results.push(RespValue::integer(old));
             }
             "INCRBY" => {
@@ -380,7 +428,9 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
                 };
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
-                    None => return RespValue::error("ERR bit offset is not an integer or out of range"),
+                    None => {
+                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                    }
                 };
                 let increment = match super::parse::int(&ctx.args[i + 3]) {
                     Some(v) => v,
@@ -403,7 +453,8 @@ pub fn cmd_bitfield(ctx: &mut CommandContext) -> RespValue {
 
                 let clamped = clamp_value(new_val, bits, signed, overflow);
                 write_bits(&mut data, offset, bits, clamped);
-                ctx.db().set_keep_ttl(key.clone(), RedisObject::String(Bytes::from(data)));
+                ctx.db()
+                    .set_keep_ttl(key.clone(), RedisObject::String(Bytes::from(data)));
                 results.push(RespValue::integer(clamped));
             }
             "OVERFLOW" => {
@@ -449,7 +500,9 @@ pub fn cmd_bitfield_ro(ctx: &mut CommandContext) -> RespValue {
                 };
                 let offset = match parse_bitfield_offset(&ctx.args[i + 2], bits) {
                     Some(v) => v,
-                    None => return RespValue::error("ERR bit offset is not an integer or out of range"),
+                    None => {
+                        return RespValue::error("ERR bit offset is not an integer or out of range");
+                    }
                 };
                 i += 3;
 
@@ -557,13 +610,15 @@ fn clamp_value(value: i64, bits: u32, signed: bool, overflow: OverflowBehavior) 
             OverflowBehavior::Wrap => {
                 let range = 1i64 << bits;
                 let mut v = value % range;
-                if v > max { v -= range; }
-                if v < min { v += range; }
+                if v > max {
+                    v -= range;
+                }
+                if v < min {
+                    v += range;
+                }
                 v
             }
-            OverflowBehavior::Sat | OverflowBehavior::Fail => {
-                value.max(min).min(max)
-            }
+            OverflowBehavior::Sat | OverflowBehavior::Fail => value.max(min).min(max),
         }
     } else {
         let max = (1i64 << bits) - 1;
@@ -572,9 +627,7 @@ fn clamp_value(value: i64, bits: u32, signed: bool, overflow: OverflowBehavior) 
                 let range = 1i64 << bits;
                 ((value % range) + range) % range
             }
-            OverflowBehavior::Sat | OverflowBehavior::Fail => {
-                value.max(0).min(max)
-            }
+            OverflowBehavior::Sat | OverflowBehavior::Fail => value.max(0).min(max),
         }
     }
 }

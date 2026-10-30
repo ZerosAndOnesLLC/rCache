@@ -1,5 +1,5 @@
-use bytes::{Bytes, BytesMut};
 use super::types::RespValue;
+use bytes::{Bytes, BytesMut};
 
 /// Streaming RESP2/RESP3 protocol parser.
 pub struct Parser;
@@ -32,7 +32,9 @@ impl Parser {
 
     fn parse_at(buf: &[u8], depth: u32) -> Result<(RespValue, usize), ParseError> {
         if depth > MAX_DEPTH {
-            return Err(ParseError::Invalid("Protocol nesting depth exceeded".to_string()));
+            return Err(ParseError::Invalid(
+                "Protocol nesting depth exceeded".to_string(),
+            ));
         }
         if buf.is_empty() {
             return Err(ParseError::Incomplete);
@@ -72,18 +74,18 @@ impl Parser {
 
     fn parse_integer(buf: &[u8]) -> Result<(RespValue, usize), ParseError> {
         let (line, consumed) = Self::read_line(buf, 1)?;
-        let s = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let n: i64 = s.parse()
+        let s = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let n: i64 = s
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
         Ok((RespValue::Integer(n), consumed))
     }
 
     fn parse_bulk_string(buf: &[u8]) -> Result<(RespValue, usize), ParseError> {
         let (line, header_consumed) = Self::read_line(buf, 1)?;
-        let len_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let len: i64 = len_str.parse()
+        let len_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
 
         if len == -1 {
@@ -91,7 +93,9 @@ impl Parser {
         }
 
         if len < 0 {
-            return Err(ParseError::Invalid("invalid bulk string length".to_string()));
+            return Err(ParseError::Invalid(
+                "invalid bulk string length".to_string(),
+            ));
         }
 
         let len = len as usize;
@@ -99,7 +103,8 @@ impl Parser {
             return Err(ParseError::Invalid("bulk string too long".to_string()));
         }
 
-        let total_needed = header_consumed.checked_add(len)
+        let total_needed = header_consumed
+            .checked_add(len)
             .and_then(|x| x.checked_add(2))
             .ok_or_else(|| ParseError::Invalid("length overflow".to_string()))?;
 
@@ -107,16 +112,20 @@ impl Parser {
             return Err(ParseError::Incomplete);
         }
 
-        let data_slice = buf.get(header_consumed..header_consumed + len)
+        let data_slice = buf
+            .get(header_consumed..header_consumed + len)
             .ok_or(ParseError::Incomplete)?;
-        Ok((RespValue::BulkString(Bytes::copy_from_slice(data_slice)), total_needed))
+        Ok((
+            RespValue::BulkString(Bytes::copy_from_slice(data_slice)),
+            total_needed,
+        ))
     }
 
     fn parse_array(buf: &[u8], depth: u32) -> Result<(RespValue, usize), ParseError> {
         let (line, mut consumed) = Self::read_line(buf, 1)?;
-        let len_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let len: i64 = len_str.parse()
+        let len_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
 
         if len == -1 {
@@ -129,7 +138,9 @@ impl Parser {
 
         let len = len as usize;
         if len > MAX_MULTIBULK_LEN {
-            return Err(ParseError::Invalid("multibulk length out of range".to_string()));
+            return Err(ParseError::Invalid(
+                "multibulk length out of range".to_string(),
+            ));
         }
 
         let mut items = Vec::with_capacity(len.min(PREALLOC_CAP));
@@ -148,13 +159,14 @@ impl Parser {
 
     fn parse_double(buf: &[u8]) -> Result<(RespValue, usize), ParseError> {
         let (line, consumed) = Self::read_line(buf, 1)?;
-        let s = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let s = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
         let d: f64 = match s {
             "inf" => f64::INFINITY,
             "-inf" => f64::NEG_INFINITY,
             "nan" => f64::NAN,
-            _ => s.parse().map_err(|e: std::num::ParseFloatError| ParseError::Invalid(e.to_string()))?,
+            _ => s
+                .parse()
+                .map_err(|e: std::num::ParseFloatError| ParseError::Invalid(e.to_string()))?,
         };
         Ok((RespValue::Double(d), consumed))
     }
@@ -170,48 +182,58 @@ impl Parser {
 
     fn parse_blob_error(buf: &[u8]) -> Result<(RespValue, usize), ParseError> {
         let (line, header_consumed) = Self::read_line(buf, 1)?;
-        let len_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let len: usize = len_str.parse()
+        let len_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: usize = len_str
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
 
         if len > MAX_BULK_LEN {
             return Err(ParseError::Invalid("blob error too long".to_string()));
         }
 
-        let total_needed = header_consumed.checked_add(len)
+        let total_needed = header_consumed
+            .checked_add(len)
             .and_then(|x| x.checked_add(2))
             .ok_or_else(|| ParseError::Invalid("length overflow".to_string()))?;
         if buf.len() < total_needed {
             return Err(ParseError::Incomplete);
         }
 
-        let data_slice = buf.get(header_consumed..header_consumed + len)
+        let data_slice = buf
+            .get(header_consumed..header_consumed + len)
             .ok_or(ParseError::Incomplete)?;
-        Ok((RespValue::BlobError(Bytes::copy_from_slice(data_slice)), total_needed))
+        Ok((
+            RespValue::BlobError(Bytes::copy_from_slice(data_slice)),
+            total_needed,
+        ))
     }
 
     fn parse_verbatim_string(buf: &[u8]) -> Result<(RespValue, usize), ParseError> {
         let (line, header_consumed) = Self::read_line(buf, 1)?;
-        let len_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let len: usize = len_str.parse()
+        let len_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: usize = len_str
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
 
         if len > MAX_BULK_LEN {
             return Err(ParseError::Invalid("verbatim string too long".to_string()));
         }
 
-        let total_needed = header_consumed.checked_add(len)
+        let total_needed = header_consumed
+            .checked_add(len)
             .and_then(|x| x.checked_add(2))
             .ok_or_else(|| ParseError::Invalid("length overflow".to_string()))?;
         if buf.len() < total_needed {
             return Err(ParseError::Incomplete);
         }
 
-        let data_slice = buf.get(header_consumed..header_consumed + len)
+        let data_slice = buf
+            .get(header_consumed..header_consumed + len)
             .ok_or(ParseError::Incomplete)?;
-        Ok((RespValue::VerbatimString(Bytes::copy_from_slice(data_slice)), total_needed))
+        Ok((
+            RespValue::VerbatimString(Bytes::copy_from_slice(data_slice)),
+            total_needed,
+        ))
     }
 
     fn parse_big_number(buf: &[u8]) -> Result<(RespValue, usize), ParseError> {
@@ -222,9 +244,9 @@ impl Parser {
 
     fn parse_map(buf: &[u8], depth: u32) -> Result<(RespValue, usize), ParseError> {
         let (line, mut consumed) = Self::read_line(buf, 1)?;
-        let len_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let len: i64 = len_str.parse()
+        let len_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
 
         if len < 0 {
@@ -254,9 +276,9 @@ impl Parser {
 
     fn parse_set(buf: &[u8], depth: u32) -> Result<(RespValue, usize), ParseError> {
         let (line, mut consumed) = Self::read_line(buf, 1)?;
-        let len_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let len: i64 = len_str.parse()
+        let len_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
 
         if len < 0 {
@@ -281,9 +303,9 @@ impl Parser {
 
     fn parse_push(buf: &[u8], depth: u32) -> Result<(RespValue, usize), ParseError> {
         let (line, mut consumed) = Self::read_line(buf, 1)?;
-        let len_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
-        let len: i64 = len_str.parse()
+        let len_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let len: i64 = len_str
+            .parse()
             .map_err(|e: std::num::ParseIntError| ParseError::Invalid(e.to_string()))?;
 
         if len < 0 {
@@ -318,8 +340,7 @@ impl Parser {
             return Err(ParseError::Incomplete);
         }
 
-        let line_str = std::str::from_utf8(line)
-            .map_err(|e| ParseError::Invalid(e.to_string()))?;
+        let line_str = std::str::from_utf8(line).map_err(|e| ParseError::Invalid(e.to_string()))?;
         let parts: Vec<RespValue> = line_str
             .split_whitespace()
             .map(|s| RespValue::BulkString(Bytes::copy_from_slice(s.as_bytes())))
@@ -387,7 +408,10 @@ mod tests {
     fn test_bulk_string() {
         let buf = BytesMut::from("$5\r\nHello\r\n");
         let (val, consumed) = Parser::parse(&buf).unwrap();
-        assert_eq!(val, RespValue::BulkString("Hello".as_bytes().to_vec().into()));
+        assert_eq!(
+            val,
+            RespValue::BulkString("Hello".as_bytes().to_vec().into())
+        );
         assert_eq!(consumed, 11);
     }
 
@@ -414,8 +438,14 @@ mod tests {
         match val {
             RespValue::Array(items) => {
                 assert_eq!(items.len(), 2);
-                assert_eq!(items[0], RespValue::BulkString("GET".as_bytes().to_vec().into()));
-                assert_eq!(items[1], RespValue::BulkString("key".as_bytes().to_vec().into()));
+                assert_eq!(
+                    items[0],
+                    RespValue::BulkString("GET".as_bytes().to_vec().into())
+                );
+                assert_eq!(
+                    items[1],
+                    RespValue::BulkString("key".as_bytes().to_vec().into())
+                );
             }
             _ => panic!("expected array"),
         }
@@ -457,7 +487,10 @@ mod tests {
         match val {
             RespValue::Array(items) => {
                 assert_eq!(items.len(), 1);
-                assert_eq!(items[0], RespValue::BulkString("PING".as_bytes().to_vec().into()));
+                assert_eq!(
+                    items[0],
+                    RespValue::BulkString("PING".as_bytes().to_vec().into())
+                );
             }
             _ => panic!("expected array"),
         }
@@ -584,7 +617,10 @@ mod tests {
     fn test_resp3_verbatim_string() {
         let buf = BytesMut::from("=15\r\ntxt:Hello World\r\n");
         let (val, consumed) = Parser::parse(&buf).unwrap();
-        assert_eq!(val, RespValue::VerbatimString(bytes::Bytes::from("txt:Hello World")));
+        assert_eq!(
+            val,
+            RespValue::VerbatimString(bytes::Bytes::from("txt:Hello World"))
+        );
         assert_eq!(consumed, 22);
     }
 
@@ -592,7 +628,10 @@ mod tests {
     fn test_resp3_big_number() {
         let buf = BytesMut::from("(12345678901234567890\r\n");
         let (val, _) = Parser::parse(&buf).unwrap();
-        assert_eq!(val, RespValue::BigNumber("12345678901234567890".to_string()));
+        assert_eq!(
+            val,
+            RespValue::BigNumber("12345678901234567890".to_string())
+        );
     }
 
     #[test]
@@ -659,9 +698,10 @@ mod tests {
             RespValue::VerbatimString(bytes::Bytes::from("txt:hello")),
             RespValue::BigNumber("12345".to_string()),
             RespValue::Resp3Null,
-            RespValue::Map(vec![
-                (RespValue::SimpleString("a".to_string()), RespValue::Integer(1)),
-            ]),
+            RespValue::Map(vec![(
+                RespValue::SimpleString("a".to_string()),
+                RespValue::Integer(1),
+            )]),
             RespValue::RespSet(vec![RespValue::Integer(1), RespValue::Integer(2)]),
             RespValue::Push(vec![RespValue::SimpleString("msg".to_string())]),
         ];

@@ -1,20 +1,20 @@
 mod connection;
 
+use bytes::Bytes;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use bytes::Bytes;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
-use crate::config::Config;
 use crate::command::CommandRegistry;
+use crate::config::Config;
 use crate::persistence::aof::{AofWriter, FsyncMode};
 use crate::protocol::RespValue;
-use crate::storage::Store;
+use crate::scripting_engine::{FunctionLibrary, ScriptCache};
 use crate::storage::ExpirationManager;
-use crate::scripting_engine::{ScriptCache, FunctionLibrary};
+use crate::storage::Store;
 
 // MaybeTls is used internally by the server module for TLS support.
 
@@ -36,7 +36,12 @@ impl PubSubManager {
         }
     }
 
-    pub fn subscribe(&mut self, client_id: u64, channel: Bytes, sender: tokio::sync::mpsc::UnboundedSender<RespValue>) {
+    pub fn subscribe(
+        &mut self,
+        client_id: u64,
+        channel: Bytes,
+        sender: tokio::sync::mpsc::UnboundedSender<RespValue>,
+    ) {
         self.channels.entry(channel).or_default().insert(client_id);
         self.subscribers.entry(client_id).or_insert(sender);
     }
@@ -50,7 +55,12 @@ impl PubSubManager {
         }
     }
 
-    pub fn psubscribe(&mut self, client_id: u64, pattern: Bytes, sender: tokio::sync::mpsc::UnboundedSender<RespValue>) {
+    pub fn psubscribe(
+        &mut self,
+        client_id: u64,
+        pattern: Bytes,
+        sender: tokio::sync::mpsc::UnboundedSender<RespValue>,
+    ) {
         self.patterns.entry(pattern).or_default().insert(client_id);
         self.subscribers.entry(client_id).or_insert(sender);
     }
@@ -130,11 +140,17 @@ impl PubSubManager {
     }
 
     pub fn client_channel_count(&self, client_id: u64) -> usize {
-        self.channels.values().filter(|subs| subs.contains(&client_id)).count()
+        self.channels
+            .values()
+            .filter(|subs| subs.contains(&client_id))
+            .count()
     }
 
     pub fn client_pattern_count(&self, client_id: u64) -> usize {
-        self.patterns.values().filter(|subs| subs.contains(&client_id)).count()
+        self.patterns
+            .values()
+            .filter(|subs| subs.contains(&client_id))
+            .count()
     }
 }
 
@@ -221,11 +237,18 @@ pub struct TrackingState {
 
 impl TrackingState {
     pub fn track(&mut self, client_id: u64, key: Bytes) {
-        self.clients.entry(client_id).or_default().insert(key.clone());
+        self.clients
+            .entry(client_id)
+            .or_default()
+            .insert(key.clone());
         self.keys.entry(key).or_default().insert(client_id);
     }
 
-    pub fn enable(&mut self, client_id: u64, sender: tokio::sync::mpsc::UnboundedSender<RespValue>) {
+    pub fn enable(
+        &mut self,
+        client_id: u64,
+        sender: tokio::sync::mpsc::UnboundedSender<RespValue>,
+    ) {
         self.clients.entry(client_id).or_default();
         self.senders.insert(client_id, sender);
     }
@@ -348,9 +371,15 @@ impl Server {
 
         // Start TLS listener if configured
         if let Some(tls_port) = self.config.tls_port {
-            let cert_file = self.config.tls_cert_file.as_ref()
+            let cert_file = self
+                .config
+                .tls_cert_file
+                .as_ref()
                 .expect("--tls-cert-file required when --tls-port is set");
-            let key_file = self.config.tls_key_file.as_ref()
+            let key_file = self
+                .config
+                .tls_key_file
+                .as_ref()
                 .expect("--tls-key-file required when --tls-port is set");
 
             let tls_acceptor = build_tls_acceptor(cert_file, key_file)?;
@@ -401,9 +430,18 @@ impl Server {
                         .await;
                         match handshake {
                             Ok(Ok(tls_stream)) => {
-                                tracing::debug!("New TLS connection from {} (client_id={})", addr, client_id);
+                                tracing::debug!(
+                                    "New TLS connection from {} (client_id={})",
+                                    addr,
+                                    client_id
+                                );
                                 let stream = connection::MaybeTls::Tls(tls_stream);
-                                let mut conn = connection::Connection::new(stream, state.clone(), client_id, Some(addr.ip()));
+                                let mut conn = connection::Connection::new(
+                                    stream,
+                                    state.clone(),
+                                    client_id,
+                                    Some(addr.ip()),
+                                );
                                 if let Err(e) = conn.handle().await {
                                     tracing::debug!("TLS connection {} error: {}", addr, e);
                                 }
@@ -454,7 +492,8 @@ impl Server {
             tokio::spawn(async move {
                 tracing::debug!("New connection from {} (client_id={})", addr, client_id);
                 let stream = connection::MaybeTls::Plain(socket);
-                let mut conn = connection::Connection::new(stream, state.clone(), client_id, Some(addr.ip()));
+                let mut conn =
+                    connection::Connection::new(stream, state.clone(), client_id, Some(addr.ip()));
                 if let Err(e) = conn.handle().await {
                     tracing::debug!("Connection {} error: {}", addr, e);
                 }

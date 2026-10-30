@@ -8,7 +8,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use crate::command::CommandContext;
@@ -32,19 +32,15 @@ pub async fn run_http_server(state: Arc<SharedState>, port: u16) -> Result<(), B
             let svc = service_fn(move |req: Request<Incoming>| {
                 let state = Arc::clone(&state);
                 async move {
-                    Ok::<_, hyper::Error>(
-                        handle_request(req, state)
-                            .await
-                            .unwrap_or_else(|e| {
-                                let body = serde_json::to_vec(&json!({"error": e.to_string()}))
-                                    .unwrap_or_default();
-                                Response::builder()
-                                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                    .header("Content-Type", "application/json")
-                                    .body(Full::new(Bytes::from(body)))
-                                    .unwrap()
-                            }),
-                    )
+                    Ok::<_, hyper::Error>(handle_request(req, state).await.unwrap_or_else(|e| {
+                        let body = serde_json::to_vec(&json!({"error": e.to_string()}))
+                            .unwrap_or_default();
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .header("Content-Type", "application/json")
+                            .body(Full::new(Bytes::from(body)))
+                            .unwrap()
+                    }))
                 }
             });
 
@@ -82,12 +78,10 @@ async fn handle_request(
         (Method::GET, "/health") => handle_health(&state),
         (Method::GET, "/info") => handle_info(&state).await,
         (Method::GET, "/metrics") => handle_metrics(&state).await,
-        (Method::POST, "/api/v1/command") => {
-            match collect_limited(req).await {
-                Ok(body) => handle_command(&state, &user, &body).await,
-                Err(resp) => Ok(resp),
-            }
-        }
+        (Method::POST, "/api/v1/command") => match collect_limited(req).await {
+            Ok(body) => handle_command(&state, &user, &body).await,
+            Err(resp) => Ok(resp),
+        },
         (Method::GET, p) if p.starts_with("/api/v1/") => {
             let key = &p["/api/v1/".len()..];
             handle_get_key(&state, &user, key).await
@@ -204,10 +198,13 @@ fn unauthorized_response() -> Response<Full<Bytes>> {
 
 fn handle_health(state: &SharedState) -> Result<Response<Full<Bytes>>, BoxError> {
     let uptime = state.start_time.elapsed().as_secs();
-    json_response(StatusCode::OK, &json!({
-        "status": "ok",
-        "uptime_secs": uptime,
-    }))
+    json_response(
+        StatusCode::OK,
+        &json!({
+            "status": "ok",
+            "uptime_secs": uptime,
+        }),
+    )
 }
 
 async fn handle_info(state: &SharedState) -> Result<Response<Full<Bytes>>, BoxError> {
@@ -271,10 +268,7 @@ async fn handle_metrics(state: &SharedState) -> Result<Response<Full<Bytes>>, Bo
         let db = store.db(i);
         let keys = db.len();
         if keys > 0 {
-            keyspace_lines.push_str(&format!(
-                "rcache_keys_total{{db=\"{}\"}} {}\n",
-                i, keys
-            ));
+            keyspace_lines.push_str(&format!("rcache_keys_total{{db=\"{}\"}} {}\n", i, keys));
         }
     }
     drop(store);
@@ -329,7 +323,9 @@ async fn handle_get_key(
         return forbidden_response("this user has no permissions to run the 'get' command");
     }
     if !acl::is_key_allowed(user, key) {
-        return forbidden_response("this user has no permissions to access one of the keys used as arguments");
+        return forbidden_response(
+            "this user has no permissions to access one of the keys used as arguments",
+        );
     }
     let key_bytes = Bytes::from(key.to_string());
     let mut store = state.store.lock().await;
@@ -344,11 +340,14 @@ async fn handle_get_key(
             let value = resp_object_to_json(obj);
             drop(store);
 
-            json_response(StatusCode::OK, &json!({
-                "value": value,
-                "type": type_name,
-                "ttl": ttl,
-            }))
+            json_response(
+                StatusCode::OK,
+                &json!({
+                    "value": value,
+                    "type": type_name,
+                    "ttl": ttl,
+                }),
+            )
         }
         None => {
             state.keyspace_misses.fetch_add(1, Ordering::Relaxed);
@@ -369,7 +368,9 @@ async fn handle_put_key(
         return forbidden_response("this user has no permissions to run the 'set' command");
     }
     if !acl::is_key_allowed(user, key) {
-        return forbidden_response("this user has no permissions to access one of the keys used as arguments");
+        return forbidden_response(
+            "this user has no permissions to access one of the keys used as arguments",
+        );
     }
     let key_bytes = Bytes::from(key.to_string());
     let value = Bytes::from(body.to_vec());
@@ -391,12 +392,18 @@ async fn handle_delete_key(
         return forbidden_response("this user has no permissions to run the 'del' command");
     }
     if !acl::is_key_allowed(user, key) {
-        return forbidden_response("this user has no permissions to access one of the keys used as arguments");
+        return forbidden_response(
+            "this user has no permissions to access one of the keys used as arguments",
+        );
     }
     let key_bytes = Bytes::from(key.to_string());
     let mut store = state.store.lock().await;
     let db = store.db_mut(0);
-    let deleted = if db.remove(&key_bytes).is_some() { 1 } else { 0 };
+    let deleted = if db.remove(&key_bytes).is_some() {
+        1
+    } else {
+        0
+    };
     drop(store);
 
     json_response(StatusCode::OK, &json!({"deleted": deleted}))
@@ -439,10 +446,7 @@ async fn handle_command(
         .collect();
 
     if args.is_empty() {
-        return json_response(
-            StatusCode::BAD_REQUEST,
-            &json!({"error": "empty command"}),
-        );
+        return json_response(StatusCode::BAD_REQUEST, &json!({"error": "empty command"}));
     }
 
     // Enforce the same ACL command/key gating the RESP path applies, so the
@@ -486,15 +490,17 @@ async fn handle_command(
 fn resp_object_to_json(obj: &crate::storage::RedisObject) -> Value {
     use crate::storage::RedisObject;
     match obj {
-        RedisObject::String(b) => {
-            Value::String(String::from_utf8_lossy(b).to_string())
-        }
-        RedisObject::List(l) => {
-            Value::Array(l.iter().map(|v| Value::String(String::from_utf8_lossy(v).to_string())).collect())
-        }
-        RedisObject::Set(s) => {
-            Value::Array(s.iter().map(|v| Value::String(String::from_utf8_lossy(v).to_string())).collect())
-        }
+        RedisObject::String(b) => Value::String(String::from_utf8_lossy(b).to_string()),
+        RedisObject::List(l) => Value::Array(
+            l.iter()
+                .map(|v| Value::String(String::from_utf8_lossy(v).to_string()))
+                .collect(),
+        ),
+        RedisObject::Set(s) => Value::Array(
+            s.iter()
+                .map(|v| Value::String(String::from_utf8_lossy(v).to_string()))
+                .collect(),
+        ),
         RedisObject::Hash(h) => {
             let map: serde_json::Map<String, Value> = h
                 .iter()
@@ -536,9 +542,7 @@ fn resp_value_to_json(value: &RespValue) -> Value {
         RespValue::Error(s) => json!({"error": s}),
         RespValue::Integer(n) => json!(n),
         RespValue::BulkString(b) => Value::String(String::from_utf8_lossy(b).to_string()),
-        RespValue::Array(items) => {
-            Value::Array(items.iter().map(resp_value_to_json).collect())
-        }
+        RespValue::Array(items) => Value::Array(items.iter().map(resp_value_to_json).collect()),
         RespValue::Null => Value::Null,
         RespValue::NullArray => Value::Null,
         // RESP3 types
@@ -559,20 +563,13 @@ fn resp_value_to_json(value: &RespValue) -> Value {
             }
             Value::Object(map)
         }
-        RespValue::RespSet(items) => {
-            Value::Array(items.iter().map(resp_value_to_json).collect())
-        }
-        RespValue::Push(items) => {
-            Value::Array(items.iter().map(resp_value_to_json).collect())
-        }
+        RespValue::RespSet(items) => Value::Array(items.iter().map(resp_value_to_json).collect()),
+        RespValue::Push(items) => Value::Array(items.iter().map(resp_value_to_json).collect()),
         RespValue::Resp3Null => Value::Null,
     }
 }
 
-fn json_response(
-    status: StatusCode,
-    body: &Value,
-) -> Result<Response<Full<Bytes>>, BoxError> {
+fn json_response(status: StatusCode, body: &Value) -> Result<Response<Full<Bytes>>, BoxError> {
     let json_bytes = serde_json::to_vec(body)?;
     let response = Response::builder()
         .status(status)

@@ -1,6 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::protocol::RespValue;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn cmd_ping(ctx: &mut CommandContext) -> RespValue {
     if ctx.args.len() > 1 {
@@ -57,7 +57,9 @@ pub fn cmd_swapdb(ctx: &mut CommandContext) -> RespValue {
 }
 
 pub fn cmd_time(_ctx: &mut CommandContext) -> RespValue {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = now.as_secs();
     let micros = now.subsec_micros();
     RespValue::array(vec![
@@ -258,10 +260,7 @@ pub fn cmd_slowlog(ctx: &mut CommandContext) -> RespValue {
             }
         }
         "LEN" => {
-            let len = GLOBAL_SLOWLOG
-                .lock()
-                .map(|log| log.len())
-                .unwrap_or(0);
+            let len = GLOBAL_SLOWLOG.lock().map(|log| log.len()).unwrap_or(0);
             RespValue::integer(len as i64)
         }
         "RESET" => {
@@ -318,9 +317,13 @@ pub fn cmd_memory(ctx: &mut CommandContext) -> RespValue {
             }
         }
         "DOCTOR" => RespValue::bulk_string(bytes::Bytes::from("Sam, I have no memory problems")),
-        "MALLOC-STATS" => RespValue::bulk_string(bytes::Bytes::from("Memory allocator stats not available")),
+        "MALLOC-STATS" => {
+            RespValue::bulk_string(bytes::Bytes::from("Memory allocator stats not available"))
+        }
         "PURGE" => RespValue::ok(),
-        "STATS" => RespValue::bulk_string(bytes::Bytes::from("peak.allocated:0\r\ntotal.allocated:0\r\n")),
+        "STATS" => RespValue::bulk_string(bytes::Bytes::from(
+            "peak.allocated:0\r\ntotal.allocated:0\r\n",
+        )),
         _ => RespValue::error(format!(
             "ERR unknown subcommand or wrong number of arguments for 'memory|{}'",
             subcmd.to_lowercase()
@@ -388,15 +391,9 @@ pub fn cmd_command(ctx: &mut CommandContext) -> RespValue {
                 // Return a reasonable number.
                 RespValue::integer(100)
             }
-            "LIST" => {
-                RespValue::array(vec![])
-            }
-            "INFO" => {
-                RespValue::array(vec![])
-            }
-            "DOCS" => {
-                RespValue::array(vec![])
-            }
+            "LIST" => RespValue::array(vec![]),
+            "INFO" => RespValue::array(vec![]),
+            "DOCS" => RespValue::array(vec![]),
             _ => RespValue::error(format!("ERR unknown subcommand '{}'", subcmd)),
         }
     } else {
@@ -406,12 +403,14 @@ pub fn cmd_command(ctx: &mut CommandContext) -> RespValue {
 
 /// SHUTDOWN [NOSAVE|SAVE] - saves RDB and exits.
 pub fn cmd_shutdown(ctx: &mut CommandContext) -> RespValue {
-    let nosave = ctx.args.len() >= 2
-        && String::from_utf8_lossy(&ctx.args[1]).to_uppercase() == "NOSAVE";
+    let nosave =
+        ctx.args.len() >= 2 && String::from_utf8_lossy(&ctx.args[1]).to_uppercase() == "NOSAVE";
 
     if !nosave {
         // Save RDB before exit if there is data
-        let total_keys: usize = (0..ctx.store.db_count()).map(|i| ctx.store.db(i).len()).sum();
+        let total_keys: usize = (0..ctx.store.db_count())
+            .map(|i| ctx.store.db(i).len())
+            .sum();
         if total_keys > 0 {
             let path = std::path::Path::new("dump.rdb");
             match crate::persistence::rdb::save(ctx.store, path) {

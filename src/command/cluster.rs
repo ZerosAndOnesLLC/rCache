@@ -1,6 +1,6 @@
-use bytes::Bytes;
-use crate::protocol::RespValue;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
+use bytes::Bytes;
 
 /// A fixed 40-char hex node ID for standalone mode.
 const NODE_ID: &str = "0000000000000000000000000000000000000000";

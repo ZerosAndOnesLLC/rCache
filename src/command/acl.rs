@@ -1,31 +1,67 @@
-use bytes::Bytes;
-use crate::protocol::RespValue;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
+use bytes::Bytes;
 
 const ACL_CATEGORIES: &[&str] = &[
-    "@read", "@write", "@admin", "@dangerous", "@slow", "@fast",
-    "@string", "@list", "@set", "@hash", "@sortedset", "@pubsub",
-    "@connection", "@server", "@generic", "@keyspace", "@scripting",
+    "@read",
+    "@write",
+    "@admin",
+    "@dangerous",
+    "@slow",
+    "@fast",
+    "@string",
+    "@list",
+    "@set",
+    "@hash",
+    "@sortedset",
+    "@pubsub",
+    "@connection",
+    "@server",
+    "@generic",
+    "@keyspace",
+    "@scripting",
 ];
 
 /// Commands belonging to each category (representative subset).
 fn category_commands(cat: &str) -> Vec<&'static str> {
     match cat {
-        "@read" => vec!["get", "mget", "hget", "lrange", "sismember", "zrange", "xrange", "xread"],
+        "@read" => vec![
+            "get",
+            "mget",
+            "hget",
+            "lrange",
+            "sismember",
+            "zrange",
+            "xrange",
+            "xread",
+        ],
         "@write" => vec!["set", "del", "hset", "lpush", "sadd", "zadd", "xadd"],
         "@admin" => vec!["acl", "config", "debug", "replicaof", "slaveof"],
         "@dangerous" => vec!["flushdb", "flushall", "keys", "sort"],
         "@slow" => vec!["sort", "keys", "smembers", "hgetall", "lrange"],
         "@fast" => vec!["get", "set", "sismember", "hget", "lpush", "rpush"],
-        "@string" => vec!["set", "get", "mset", "mget", "incr", "decr", "append", "strlen"],
+        "@string" => vec![
+            "set", "get", "mset", "mget", "incr", "decr", "append", "strlen",
+        ],
         "@list" => vec!["lpush", "rpush", "lpop", "rpop", "llen", "lrange", "lindex"],
-        "@set" => vec!["sadd", "srem", "sismember", "smembers", "scard", "sdiff", "sinter", "sunion"],
+        "@set" => vec![
+            "sadd",
+            "srem",
+            "sismember",
+            "smembers",
+            "scard",
+            "sdiff",
+            "sinter",
+            "sunion",
+        ],
         "@hash" => vec!["hset", "hget", "hdel", "hlen", "hkeys", "hvals", "hgetall"],
         "@sortedset" => vec!["zadd", "zrem", "zscore", "zrange", "zrank", "zcard"],
         "@pubsub" => vec!["subscribe", "unsubscribe", "publish"],
         "@connection" => vec!["ping", "echo", "select", "auth", "quit"],
         "@server" => vec!["info", "dbsize", "time", "command", "config"],
-        "@generic" => vec!["del", "exists", "expire", "ttl", "type", "rename", "keys", "scan"],
+        "@generic" => vec![
+            "del", "exists", "expire", "ttl", "type", "rename", "keys", "scan",
+        ],
         "@keyspace" => vec!["del", "exists", "expire", "ttl", "type", "rename", "unlink"],
         "@scripting" => vec!["eval", "evalsha", "script"],
         _ => vec![],
@@ -94,9 +130,9 @@ fn cmd_acl_list() -> RespValue {
         }
         RespValue::array(result)
     } else {
-        RespValue::array(vec![
-            RespValue::bulk_string(Bytes::from("user default on ~* &* +@all")),
-        ])
+        RespValue::array(vec![RespValue::bulk_string(Bytes::from(
+            "user default on ~* &* +@all",
+        ))])
     }
 }
 
@@ -108,9 +144,7 @@ fn cmd_acl_users() -> RespValue {
             .collect();
         RespValue::array(names)
     } else {
-        RespValue::array(vec![
-            RespValue::bulk_string(Bytes::from("default")),
-        ])
+        RespValue::array(vec![RespValue::bulk_string(Bytes::from("default"))])
     }
 }
 
@@ -206,7 +240,7 @@ fn cmd_acl_setuser(ctx: &mut CommandContext) -> RespValue {
                     if pass.is_empty() {
                         return RespValue::error("ERR password cannot be empty");
                     }
-                    use sha2::{Sha256, Digest};
+                    use sha2::{Digest, Sha256};
                     let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
                     if !user.passwords.contains(&hash) {
                         user.passwords.push(hash);
@@ -219,7 +253,7 @@ fn cmd_acl_setuser(ctx: &mut CommandContext) -> RespValue {
                     if pass.is_empty() {
                         return RespValue::error("ERR password cannot be empty");
                     }
-                    use sha2::{Sha256, Digest};
+                    use sha2::{Digest, Sha256};
                     let hash = format!("{:x}", Sha256::digest(pass.as_bytes()));
                     user.passwords.retain(|p| p != &hash);
                 }
@@ -312,7 +346,11 @@ fn cmd_acl_getuser(ctx: &mut CommandContext) -> RespValue {
             if user.all_commands {
                 commands_str.push_str("+@all");
             } else {
-                let cmds: Vec<String> = user.allowed_commands.iter().map(|c| format!("+{}", c.to_lowercase())).collect();
+                let cmds: Vec<String> = user
+                    .allowed_commands
+                    .iter()
+                    .map(|c| format!("+{}", c.to_lowercase()))
+                    .collect();
                 commands_str.push_str(&cmds.join(" "));
             }
             for cmd in &user.denied_commands {
@@ -413,8 +451,8 @@ fn cmd_acl_log(ctx: &mut CommandContext) -> RespValue {
 // Global ACL user registry (accessible from command handlers).
 // This mirrors the one in SharedState for use by commands that don't have
 // access to the async SharedState.
-use std::sync::Mutex;
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone)]
 struct AclUserEntry {
@@ -493,7 +531,10 @@ pub fn check_password(username: &str, password: &str) -> AuthOutcome {
                 }
                 use sha2::{Digest, Sha256};
                 let hash = format!("{:x}", Sha256::digest(password.as_bytes()));
-                if u.passwords.iter().any(|p| constant_time_eq(p.as_bytes(), hash.as_bytes())) {
+                if u.passwords
+                    .iter()
+                    .any(|p| constant_time_eq(p.as_bytes(), hash.as_bytes()))
+                {
                     AuthOutcome::Ok
                 } else {
                     AuthOutcome::WrongPass
@@ -688,7 +729,10 @@ mod tests {
     #[test]
     fn test_command_keys() {
         let mk = |parts: &[&str]| {
-            parts.iter().map(|s| Bytes::from(s.to_string())).collect::<Vec<_>>()
+            parts
+                .iter()
+                .map(|s| Bytes::from(s.to_string()))
+                .collect::<Vec<_>>()
         };
 
         // Every arg is a key.
@@ -720,7 +764,10 @@ mod tests {
     #[test]
     fn test_command_channels() {
         let mk = |parts: &[&str]| {
-            parts.iter().map(|s| Bytes::from(s.to_string())).collect::<Vec<_>>()
+            parts
+                .iter()
+                .map(|s| Bytes::from(s.to_string()))
+                .collect::<Vec<_>>()
         };
 
         // PUBLISH: only the channel, not the message payload.

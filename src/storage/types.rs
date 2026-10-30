@@ -30,7 +30,11 @@ impl RedisObject {
     pub fn encoding_name(&self) -> &'static str {
         match self {
             RedisObject::String(b) => {
-                if std::str::from_utf8(b).ok().and_then(|s| s.parse::<i64>().ok()).is_some() {
+                if std::str::from_utf8(b)
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .is_some()
+                {
                     "int"
                 } else if b.len() <= 44 {
                     "embstr"
@@ -46,7 +50,12 @@ impl RedisObject {
                 }
             }
             RedisObject::Set(s) => {
-                let all_ints = s.iter().all(|v| std::str::from_utf8(v).ok().and_then(|s| s.parse::<i64>().ok()).is_some());
+                let all_ints = s.iter().all(|v| {
+                    std::str::from_utf8(v)
+                        .ok()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .is_some()
+                });
                 if all_ints && s.len() <= 512 {
                     "intset"
                 } else if s.len() <= 128 {
@@ -103,10 +112,15 @@ impl RedisObject {
                 items + 64
             }
             RedisObject::Stream(s) => {
-                let entries: usize = s.entries.iter().map(|(_, fields)| {
-                    let field_size: usize = fields.iter().map(|(k, v)| k.len() + v.len() + 48).sum();
-                    field_size + 32
-                }).sum();
+                let entries: usize = s
+                    .entries
+                    .iter()
+                    .map(|(_, fields)| {
+                        let field_size: usize =
+                            fields.iter().map(|(k, v)| k.len() + v.len() + 48).sum();
+                        field_size + 32
+                    })
+                    .sum();
                 let groups: usize = s.groups.len() * 128;
                 entries + groups + 64
             }
@@ -125,7 +139,12 @@ fn estimate_json_size(v: &serde_json::Value) -> usize {
         serde_json::Value::Number(_) => 16,
         serde_json::Value::String(s) => s.len() + 24,
         serde_json::Value::Array(arr) => 24 + arr.iter().map(estimate_json_size).sum::<usize>(),
-        serde_json::Value::Object(obj) => 48 + obj.iter().map(|(k, v)| k.len() + 24 + estimate_json_size(v)).sum::<usize>(),
+        serde_json::Value::Object(obj) => {
+            48 + obj
+                .iter()
+                .map(|(k, v)| k.len() + 24 + estimate_json_size(v))
+                .sum::<usize>()
+        }
     }
 }
 
@@ -159,7 +178,8 @@ impl PartialOrd for ScoreKey {
 
 impl Ord for ScoreKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score.partial_cmp(&other.score)
+        self.score
+            .partial_cmp(&other.score)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| self.member.cmp(&other.member))
     }
@@ -176,7 +196,10 @@ impl SortedSetData {
     /// Add or update a member. Returns true if the member was newly inserted.
     pub fn insert(&mut self, member: Bytes, score: f64) -> bool {
         if let Some(old_score) = self.members.insert(member.clone(), score) {
-            self.scores.remove(&ScoreKey { score: old_score, member: member.clone() });
+            self.scores.remove(&ScoreKey {
+                score: old_score,
+                member: member.clone(),
+            });
             self.scores.insert(ScoreKey { score, member });
             false
         } else {
@@ -187,7 +210,10 @@ impl SortedSetData {
 
     pub fn remove(&mut self, member: &Bytes) -> bool {
         if let Some(score) = self.members.remove(member) {
-            self.scores.remove(&ScoreKey { score, member: member.clone() });
+            self.scores.remove(&ScoreKey {
+                score,
+                member: member.clone(),
+            });
             true
         } else {
             false
@@ -209,7 +235,10 @@ impl SortedSetData {
     /// Get the rank (0-based position) of a member.
     pub fn rank(&self, member: &Bytes) -> Option<usize> {
         let score = self.members.get(member)?;
-        let key = ScoreKey { score: *score, member: member.clone() };
+        let key = ScoreKey {
+            score: *score,
+            member: member.clone(),
+        };
         Some(self.scores.range(..&key).count())
     }
 
@@ -222,14 +251,23 @@ impl SortedSetData {
     /// Range by index (inclusive start/end).
     pub fn range_by_index(&self, start: i64, stop: i64) -> Vec<(Bytes, f64)> {
         let len = self.len() as i64;
-        let start = if start < 0 { (len + start).max(0) } else { start.min(len) } as usize;
-        let stop = if stop < 0 { (len + stop).max(0) } else { stop.min(len - 1) } as usize;
+        let start = if start < 0 {
+            (len + start).max(0)
+        } else {
+            start.min(len)
+        } as usize;
+        let stop = if stop < 0 {
+            (len + stop).max(0)
+        } else {
+            stop.min(len - 1)
+        } as usize;
 
         if start > stop {
             return vec![];
         }
 
-        self.scores.iter()
+        self.scores
+            .iter()
             .skip(start)
             .take(stop - start + 1)
             .map(|k| (k.member.clone(), k.score))
@@ -237,13 +275,22 @@ impl SortedSetData {
     }
 
     /// Range by score with inclusive/exclusive bounds.
-    pub fn range_by_score_bounded(&self, min: f64, min_inclusive: bool, max: f64, max_inclusive: bool) -> Vec<(Bytes, f64)> {
+    pub fn range_by_score_bounded(
+        &self,
+        min: f64,
+        min_inclusive: bool,
+        max: f64,
+        max_inclusive: bool,
+    ) -> Vec<(Bytes, f64)> {
         use std::ops::Bound;
         let min_bound = if min == f64::NEG_INFINITY {
             Bound::Unbounded
         } else {
             // Use empty member for inclusive lower bound (sorts before all members)
-            Bound::Included(ScoreKey { score: min, member: Bytes::new() })
+            Bound::Included(ScoreKey {
+                score: min,
+                member: Bytes::new(),
+            })
         };
         let max_bound = if max == f64::INFINITY {
             Bound::Unbounded
@@ -252,13 +299,26 @@ impl SortedSetData {
             Bound::Unbounded
         };
 
-        self.scores.range((min_bound, max_bound))
+        self.scores
+            .range((min_bound, max_bound))
             .take_while(|k| {
-                if max_inclusive { k.score <= max } else { k.score < max }
+                if max_inclusive {
+                    k.score <= max
+                } else {
+                    k.score < max
+                }
             })
             .filter_map(|k| {
-                let in_min = if min_inclusive { k.score >= min } else { k.score > min };
-                if in_min { Some((k.member.clone(), k.score)) } else { None }
+                let in_min = if min_inclusive {
+                    k.score >= min
+                } else {
+                    k.score > min
+                };
+                if in_min {
+                    Some((k.member.clone(), k.score))
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -310,7 +370,10 @@ impl StreamId {
     }
 
     pub fn max() -> Self {
-        Self { ms: u64::MAX, seq: u64::MAX }
+        Self {
+            ms: u64::MAX,
+            seq: u64::MAX,
+        }
     }
 }
 

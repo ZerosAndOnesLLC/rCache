@@ -1,10 +1,13 @@
-use bytes::Bytes;
-use std::collections::VecDeque;
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
+use std::collections::VecDeque;
 
-fn get_list<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a mut VecDeque<Bytes>>, RespValue> {
+fn get_list<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<Option<&'a mut VecDeque<Bytes>>, RespValue> {
     match ctx.db().get_mut(key) {
         Some(RedisObject::List(list)) => Ok(Some(list)),
         Some(_) => Err(RespValue::wrong_type()),
@@ -12,8 +15,14 @@ fn get_list<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<Option<&'a m
     }
 }
 
-fn ensure_list<'a>(ctx: &'a mut CommandContext, key: &Bytes) -> Result<&'a mut VecDeque<Bytes>, RespValue> {
-    match ctx.db().get_or_insert_with(key, || RedisObject::List(VecDeque::new())) {
+fn ensure_list<'a>(
+    ctx: &'a mut CommandContext,
+    key: &Bytes,
+) -> Result<&'a mut VecDeque<Bytes>, RespValue> {
+    match ctx
+        .db()
+        .get_or_insert_with(key, || RedisObject::List(VecDeque::new()))
+    {
         RedisObject::List(list) => Ok(list),
         _ => Err(RespValue::wrong_type()),
     }
@@ -230,12 +239,21 @@ pub fn cmd_lrange(ctx: &mut CommandContext) -> RespValue {
     match db.get(&key) {
         Some(RedisObject::List(list)) => {
             let len = list.len() as i64;
-            let s = if start < 0 { (len + start).max(0) } else { start.min(len) } as usize;
-            let e = if stop < 0 { (len + stop).max(0) } else { stop.min(len - 1) } as usize;
+            let s = if start < 0 {
+                (len + start).max(0)
+            } else {
+                start.min(len)
+            } as usize;
+            let e = if stop < 0 {
+                (len + stop).max(0)
+            } else {
+                stop.min(len - 1)
+            } as usize;
             if s > e {
                 return RespValue::array(vec![]);
             }
-            let items: Vec<RespValue> = list.iter()
+            let items: Vec<RespValue> = list
+                .iter()
                 .skip(s)
                 .take(e - s + 1)
                 .map(|v| RespValue::bulk_string(v.clone()))
@@ -312,7 +330,13 @@ pub fn cmd_lrem(ctx: &mut CommandContext) -> RespValue {
     match get_list(ctx, &key) {
         Ok(Some(list)) => {
             let mut removed = 0i64;
-            let target = if count > 0 { count } else if count < 0 { -count } else { i64::MAX };
+            let target = if count > 0 {
+                count
+            } else if count < 0 {
+                -count
+            } else {
+                i64::MAX
+            };
 
             if count >= 0 {
                 // Remove from head
@@ -358,8 +382,16 @@ pub fn cmd_ltrim(ctx: &mut CommandContext) -> RespValue {
     match get_list(ctx, &key) {
         Ok(Some(list)) => {
             let len = list.len() as i64;
-            let s = if start < 0 { (len + start).max(0) } else { start.min(len) } as usize;
-            let e = if stop < 0 { (len + stop).max(0) } else { stop.min(len - 1) } as usize;
+            let s = if start < 0 {
+                (len + start).max(0)
+            } else {
+                start.min(len)
+            } as usize;
+            let e = if stop < 0 {
+                (len + stop).max(0)
+            } else {
+                stop.min(len - 1)
+            } as usize;
 
             if s > e || s >= list.len() {
                 list.clear();
@@ -389,16 +421,22 @@ pub fn cmd_lpos(ctx: &mut CommandContext) -> RespValue {
         match opt.as_str() {
             "RANK" => {
                 i += 1;
-                if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 rank = match super::parse::int(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not an integer or out of range"),
                 };
-                if rank == 0 { return RespValue::error("ERR RANK can't be zero"); }
+                if rank == 0 {
+                    return RespValue::error("ERR RANK can't be zero");
+                }
             }
             "COUNT" => {
                 i += 1;
-                if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 count = Some(match super::parse::usize_(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not an integer or out of range"),
@@ -406,7 +444,9 @@ pub fn cmd_lpos(ctx: &mut CommandContext) -> RespValue {
             }
             "MAXLEN" => {
                 i += 1;
-                if i >= ctx.args.len() { return RespValue::error("ERR syntax error"); }
+                if i >= ctx.args.len() {
+                    return RespValue::error("ERR syntax error");
+                }
                 maxlen = match super::parse::usize_(&ctx.args[i]) {
                     Some(v) => v,
                     None => return RespValue::error("ERR value is not an integer or out of range"),
@@ -457,7 +497,10 @@ pub fn cmd_lpos(ctx: &mut CommandContext) -> RespValue {
             if count.is_some() {
                 RespValue::array(matches.into_iter().map(RespValue::integer).collect())
             } else {
-                matches.first().map(|&v| RespValue::integer(v)).unwrap_or(RespValue::Null)
+                matches
+                    .first()
+                    .map(|&v| RespValue::integer(v))
+                    .unwrap_or(RespValue::Null)
             }
         }
         Some(_) => RespValue::wrong_type(),
@@ -480,13 +523,11 @@ pub fn cmd_lmove(ctx: &mut CommandContext) -> RespValue {
     // Pop from source
     let db = ctx.db();
     let value = match db.get_mut(&src) {
-        Some(RedisObject::List(list)) => {
-            match wherefrom.as_str() {
-                "LEFT" => list.pop_front(),
-                "RIGHT" => list.pop_back(),
-                _ => return RespValue::error("ERR syntax error"),
-            }
-        }
+        Some(RedisObject::List(list)) => match wherefrom.as_str() {
+            "LEFT" => list.pop_front(),
+            "RIGHT" => list.pop_back(),
+            _ => return RespValue::error("ERR syntax error"),
+        },
         Some(_) => return RespValue::wrong_type(),
         None => return RespValue::Null,
     };
@@ -623,13 +664,11 @@ pub fn cmd_blmove(ctx: &mut CommandContext) -> RespValue {
 
     let db = ctx.db();
     let value = match db.get_mut(&src) {
-        Some(RedisObject::List(list)) => {
-            match wherefrom.as_str() {
-                "LEFT" => list.pop_front(),
-                "RIGHT" => list.pop_back(),
-                _ => return RespValue::error("ERR syntax error"),
-            }
-        }
+        Some(RedisObject::List(list)) => match wherefrom.as_str() {
+            "LEFT" => list.pop_front(),
+            "RIGHT" => list.pop_back(),
+            _ => return RespValue::error("ERR syntax error"),
+        },
         Some(_) => return RespValue::wrong_type(),
         None => return RespValue::Null,
     };

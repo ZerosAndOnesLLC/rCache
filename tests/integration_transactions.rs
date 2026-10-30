@@ -43,7 +43,11 @@ fn watch_aborts_on_mutation() {
         .arg(v + 10)
         .query(&mut tx)
         .unwrap();
-    assert!(matches!(res, redis::Value::Nil), "expected nil from aborted EXEC, got {:?}", res);
+    assert!(
+        matches!(res, redis::Value::Nil),
+        "expected nil from aborted EXEC, got {:?}",
+        res
+    );
 
     let final_val: i64 = other.get("balance").unwrap();
     assert_eq!(final_val, 200, "watched mutation should be preserved");

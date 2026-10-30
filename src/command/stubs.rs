@@ -1,6 +1,6 @@
-use bytes::Bytes;
-use crate::protocol::RespValue;
 use super::registry::CommandContext;
+use crate::protocol::RespValue;
+use bytes::Bytes;
 
 // ============================================================
 // Group 1: Connection-level command stubs
@@ -71,10 +71,7 @@ pub fn cmd_monitor(_ctx: &mut CommandContext) -> RespValue {
 
 /// WAITAOF - stub returning [0, 0]
 pub fn cmd_waitaof(_ctx: &mut CommandContext) -> RespValue {
-    RespValue::array(vec![
-        RespValue::integer(0),
-        RespValue::integer(0),
-    ])
+    RespValue::array(vec![RespValue::integer(0), RespValue::integer(0)])
 }
 
 /// SPUBLISH channel message - sharded pub/sub stub

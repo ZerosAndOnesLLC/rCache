@@ -1,8 +1,8 @@
-use bytes::Bytes;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use super::registry::CommandContext;
 use crate::protocol::RespValue;
 use crate::storage::RedisObject;
-use super::registry::CommandContext;
+use bytes::Bytes;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub fn cmd_del(ctx: &mut CommandContext) -> RespValue {
     let mut count = 0i64;
@@ -42,7 +42,15 @@ fn parse_expire_flags(args: &[Bytes], start: usize) -> (bool, bool, bool, bool) 
     (nx, xx, gt, lt)
 }
 
-fn apply_expire(ctx: &mut CommandContext, key: &Bytes, new_expire: Instant, nx: bool, xx: bool, gt: bool, lt: bool) -> RespValue {
+fn apply_expire(
+    ctx: &mut CommandContext,
+    key: &Bytes,
+    new_expire: Instant,
+    nx: bool,
+    xx: bool,
+    gt: bool,
+    lt: bool,
+) -> RespValue {
     let db = ctx.db();
     if !db.exists(key) {
         return RespValue::integer(0);
@@ -113,7 +121,10 @@ pub fn cmd_expireat(ctx: &mut CommandContext) -> RespValue {
         return RespValue::error("ERR invalid expire time in 'expireat' command");
     }
     let (nx, xx, gt, lt) = parse_expire_flags(&ctx.args, 3);
-    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
     let delta = ts - now_secs;
     let when = if delta > 0 {
         Instant::now() + Duration::from_secs(delta as u64)
@@ -133,7 +144,10 @@ pub fn cmd_pexpireat(ctx: &mut CommandContext) -> RespValue {
         return RespValue::error("ERR invalid expire time in 'pexpireat' command");
     }
     let (nx, xx, gt, lt) = parse_expire_flags(&ctx.args, 3);
-    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
     let delta = ts_ms - now_ms;
     let when = if delta > 0 {
         Instant::now() + Duration::from_millis(delta as u64)
@@ -179,10 +193,16 @@ pub fn cmd_expiretime(ctx: &mut CommandContext) -> RespValue {
     match db.get_expire(&key) {
         Some(expire) => {
             let now = Instant::now();
-            let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+            let now_unix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             if expire > now {
                 let delta = (expire - now).as_secs();
-                match now_unix.checked_add(delta).and_then(|v| i64::try_from(v).ok()) {
+                match now_unix
+                    .checked_add(delta)
+                    .and_then(|v| i64::try_from(v).ok())
+                {
                     Some(v) => RespValue::integer(v),
                     None => RespValue::integer(i64::MAX),
                 }
@@ -203,7 +223,10 @@ pub fn cmd_pexpiretime(ctx: &mut CommandContext) -> RespValue {
     match db.get_expire(&key) {
         Some(expire) => {
             let now = Instant::now();
-            let now_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+            let now_unix_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
             if expire > now {
                 let delta_ms = i64::try_from((expire - now).as_millis()).unwrap_or(i64::MAX);
                 RespValue::integer(now_unix_ms.saturating_add(delta_ms))
@@ -265,16 +288,14 @@ pub fn cmd_object(ctx: &mut CommandContext) -> RespValue {
     }
     let subcmd = String::from_utf8_lossy(&ctx.args[1]).to_uppercase();
     match subcmd.as_str() {
-        "HELP" => {
-            RespValue::array(vec![
-                RespValue::simple_string("OBJECT subcommand [arguments]"),
-                RespValue::simple_string("ENCODING <key> - Return the encoding of a key."),
-                RespValue::simple_string("REFCOUNT <key> - Return the reference count of a key."),
-                RespValue::simple_string("IDLETIME <key> - Return the idle time of a key."),
-                RespValue::simple_string("FREQ <key> - Return the access frequency of a key."),
-                RespValue::simple_string("HELP - Return this help message."),
-            ])
-        }
+        "HELP" => RespValue::array(vec![
+            RespValue::simple_string("OBJECT subcommand [arguments]"),
+            RespValue::simple_string("ENCODING <key> - Return the encoding of a key."),
+            RespValue::simple_string("REFCOUNT <key> - Return the reference count of a key."),
+            RespValue::simple_string("IDLETIME <key> - Return the idle time of a key."),
+            RespValue::simple_string("FREQ <key> - Return the access frequency of a key."),
+            RespValue::simple_string("HELP - Return this help message."),
+        ]),
         "ENCODING" => {
             if ctx.args.len() < 3 {
                 return RespValue::wrong_arity("object|encoding");
@@ -320,7 +341,10 @@ pub fn cmd_object(ctx: &mut CommandContext) -> RespValue {
             let counter = db.lfu_of(&key).unwrap_or(0);
             RespValue::integer(counter as i64)
         }
-        _ => RespValue::error(format!("ERR unknown subcommand or wrong number of arguments for 'object|{}'", subcmd.to_lowercase())),
+        _ => RespValue::error(format!(
+            "ERR unknown subcommand or wrong number of arguments for 'object|{}'",
+            subcmd.to_lowercase()
+        )),
     }
 }
 
@@ -368,10 +392,14 @@ pub fn cmd_sort(ctx: &mut CommandContext) -> RespValue {
     let items: Vec<Bytes> = match db.get(&key) {
         Some(RedisObject::List(list)) => list.iter().cloned().collect(),
         Some(RedisObject::Set(set)) => set.iter().cloned().collect(),
-        Some(RedisObject::SortedSet(zset)) => {
-            zset.range_by_index(0, -1).into_iter().map(|(m, _)| m).collect()
+        Some(RedisObject::SortedSet(zset)) => zset
+            .range_by_index(0, -1)
+            .into_iter()
+            .map(|(m, _)| m)
+            .collect(),
+        Some(RedisObject::Stream(_)) | Some(RedisObject::Json(_)) => {
+            return RespValue::wrong_type();
         }
-        Some(RedisObject::Stream(_)) | Some(RedisObject::Json(_)) => return RespValue::wrong_type(),
         Some(_) => return RespValue::wrong_type(),
         None => return RespValue::array(vec![]),
     };
@@ -393,8 +421,16 @@ pub fn cmd_sort(ctx: &mut CommandContext) -> RespValue {
                 if i + 2 >= ctx.args.len() {
                     return RespValue::error("ERR syntax error");
                 }
-                limit_offset = Some(String::from_utf8_lossy(&ctx.args[i + 1]).parse().unwrap_or(0));
-                limit_count = Some(String::from_utf8_lossy(&ctx.args[i + 2]).parse().unwrap_or(0));
+                limit_offset = Some(
+                    String::from_utf8_lossy(&ctx.args[i + 1])
+                        .parse()
+                        .unwrap_or(0),
+                );
+                limit_count = Some(
+                    String::from_utf8_lossy(&ctx.args[i + 2])
+                        .parse()
+                        .unwrap_or(0),
+                );
                 i += 2;
             }
             "STORE" => {
